@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import os
 
 # Ayarlar
-TABLE_NAME = "makine_AI" 
+TABLE_NAME = "MAI_Radar" 
 AIRTABLE_TOKEN = os.environ['AIRTABLE_TOKEN']
 AIRTABLE_BASE_ID = os.environ['AIRTABLE_BASE_ID']
 
@@ -29,7 +29,7 @@ def get_news():
                 # SÜTUN İSİMLERİ BURADA EŞLEŞİYOR
                 news_list.append({
                     "fields": {
-                        "Haber Metni": title, # Senin tablodaki isim
+                        "Haber_Metni": title, # Senin tablodaki isim
                         "URL": link           # Senin tablodaki isim
                     }
                 })
