@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import os
 import time
 
-# SABİT AYARLAR
+# AYARLAR
 BASE_ID = "appC4JNkqLfVCEcna"
 TABLE_ID = "tbl1paeNlwYfvKQlP"
 TOKEN = os.environ.get('AIRTABLE_TOKEN')
@@ -13,7 +13,7 @@ def start():
         print("HATA: AIRTABLE_TOKEN bulunamadı!")
         return
 
-    # 1. Airtable'daki mevcut kayıtları kontrol et (Mükerrer engelleme)
+    # 1. Mevcut Kayıtları Çek
     existing_urls = set()
     try:
         r = requests.get(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
@@ -22,48 +22,46 @@ def start():
             for rec in r.json().get('records', []):
                 u = rec.get('fields', {}).get('URL')
                 if u: existing_urls.add(u)
-        print(f"Bilgi: Airtable'da {len(existing_urls)} kayıt zaten var.")
-    except:
-        pass
+    except: pass
 
-    # 2. Siteyi tara (Sınırsız Sayfa Modu)
+    # 2. Siteyi Tara
     new_records = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    for p in range(1, 21): # 20 sayfaya kadar tarar
+    for p in range(1, 11): # 10 sayfa tara
         url = f"https://www.forummakina.com.tr/tr/haberler?page={p}"
-        print(f"Sayfa {p} taranıyor...")
+        print(f"Sayfa {p} inceleniyor...")
         
         try:
             res = requests.get(url, headers=headers, timeout=20)
-            if res.status_code != 200: break
-            
             soup = BeautifulSoup(res.text, 'html.parser')
-            # Her bir haber kutusunu bul (col-md-4 yapısı)
+            
+            # Tüm haber bloklarını bul
             items = soup.find_all('div', class_='col-md-4')
+            if not items: break
             
-            if not items: break # Sayfada hiç haber kutusu yoksa bitir
-            
-            found_2026 = 0
+            found_count = 0
             for item in items:
-                date_div = item.find('div', class_='date')
-                # Sadece 2026 yazanları süz
-                if date_div and "2026" in date_div.get_text(strip=True):
-                    # BAŞLIK: <div class="title"> içinden
-                    title_div = item.find('div', class_='title')
-                    # URL: a etiketinden
+                # 2026 Kontrolü
+                if "2026" in item.get_text():
+                    # BAŞLIK: Önce 'title' class'ına bak, yoksa h3'e bak, o da yoksa ilk linke bak
+                    title_div = item.find('div', class_='title') or item.find('h3') or item.find('a')
+                    # URL: Haber kutusundaki ilk geçerli link
                     link_tag = item.find('a', href=True)
-                    # ÖN YAZI: span etiketinden
-                    span_tag = item.find('span')
+                    # ÖN YAZI: Önce span'a bak, yoksa p'ye bak
+                    desc_tag = item.find('span') or item.find('p')
                     
                     if title_div and link_tag:
                         href = link_tag['href']
                         full_link = "https://www.forummakina.com.tr" + href if not href.startswith('http') else href
                         
-                        # Eğer URL daha önce eklenmemişse listeye al
                         if full_link not in existing_urls:
                             title = title_div.get_text(strip=True)
-                            desc = span_tag.get_text(strip=True) if span_tag else "Detaylar haber içeriğinde."
+                            # Eğer başlık "DEVAMI" gibi çok kısaysa kutudaki en uzun metni almayı dene
+                            if len(title) < 10 and item.find('h3'):
+                                title = item.find('h3').get_text(strip=True)
+                                
+                            desc = desc_tag.get_text(strip=True) if desc_tag else "Detay haberde."
                             
                             new_records.append({
                                 "fields": {
@@ -72,28 +70,27 @@ def start():
                                     "Haber_Ön_Yazı": desc
                                 }
                             })
-                            found_2026 += 1
+                            found_count += 1
             
-            print(f"Sayfa {p}: {found_2026} yeni haber yakalandı.")
-            # Eğer bir sayfada 2026 kalmadıysa aramayı durdur (Eski yıllara geçilmiştir)
-            if found_2026 == 0 and p > 1: break
+            print(f"Sayfa {p}: {found_count} adet 2026 haberi listeye alındı.")
+            if found_count == 0 and p > 1: break # 2026'lar bittiyse dur
             time.sleep(1)
             
         except Exception as e:
-            print(f"Hata oluştu: {e}")
+            print(f"Hata: {e}")
             break
 
-    # 3. Airtable'a Gönder
+    # 3. Gönderim
     if new_records:
-        print(f"Toplam {len(new_records)} yeni haber gönderiliyor...")
-        api_url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}"
+        print(f"Toplam {len(new_records)} yeni haber Airtable'a gönderiliyor...")
         for i in range(0, len(new_records), 10):
             batch = new_records[i:i+10]
-            requests.post(api_url, json={"records": batch}, 
+            requests.post(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
+                          json={"records": batch}, 
                           headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
-        print("İşlem başarıyla tamamlandı.")
+        print("Bitti!")
     else:
-        print("Yeni 2026 haberi bulunamadı.")
+        print("Eklenecek yeni haber bulunamadı.")
 
 if __name__ == "__main__":
     start()
