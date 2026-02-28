@@ -9,7 +9,6 @@ TABLE_ID = "tbl1paeNlwYfvKQlP"
 TOKEN = os.environ.get('AIRTABLE_TOKEN')
 
 def get_airtable_data():
-    """Mevcut URL'leri Airtable'dan çeker."""
     existing_urls = set()
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}"
     headers = {"Authorization": f"Bearer {TOKEN}"}
@@ -32,77 +31,63 @@ def start():
         print("HATA: TOKEN Tanımlanmamış!")
         return
 
-    print("Airtable verileri kontrol ediliyor...")
+    print("Mevcut veriler taranıyor...")
     existing_urls = get_airtable_data()
 
     all_new_news = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # 1. Sayfadan başlayarak tara
     page = 1
-    while page <= 20: # Maksimum 20 sayfa tara
+    while page <= 15:
         target_url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
         print(f"Sayfa {page} taranıyor...")
         
         try:
             res = requests.get(target_url, headers=headers, timeout=30)
             soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # HABER KUTULARINI BUL (Verdiğin koda göre: li.news)
             news_items = soup.find_all('li', class_='news')
             
-            if not news_items:
-                print("Sayfada haber kutusu bulunamadı, tarama bitiriliyor.")
-                break
+            if not news_items: break
                 
-            found_2026_count = 0
+            found_on_page = 0
             for item in news_items:
-                # 1. TARİH KONTROLÜ
                 date_div = item.find('div', class_='date')
                 if date_div and "2026" in date_div.get_text():
-                    
-                    # 2. URL BULMA (İlk a etiketindeki link)
                     link_tag = item.find('a', href=True)
                     if not link_tag: continue
                     
                     href = link_tag['href']
                     full_link = "https://www.forummakina.com.tr" + href if not href.startswith('http') else href
                     
-                    # 3. MÜKERRER KONTROLÜ
                     if full_link not in existing_urls:
-                        # 4. BAŞLIK BULMA (div class="title")
                         title_div = item.find('div', class_='title')
                         title = title_div.get_text(strip=True) if title_div else "Başlık Yok"
                         
-                        # 5. ÖN YAZI BULMA (span içindeki metin, 'devamı' linki hariç)
+                        # --- RESİM ÇEKME KISMI ---
+                        img_tag = item.find('img')
+                        img_url = img_tag['src'] if img_tag and img_tag.has_attr('src') else ""
+                        # Eğer resim linki eksik gelirse tamamlayalım
+                        if img_url and not img_url.startswith('http'):
+                            img_url = "https://www.forummakina.com.tr" + img_url
+                        
                         span_tag = item.find('span')
                         if span_tag:
-                            # Span içindeki 'a' etiketini (devamı yazısını) temizleyelim
-                            for a_tag in span_tag.find_all('a'):
-                                a_tag.decompose()
+                            for a_tag in span_tag.find_all('a'): a_tag.decompose()
                             desc = span_tag.get_text(strip=True)
-                        else:
-                            desc = "Özet bulunamadı."
+                        else: desc = "Özet yok."
                         
                         all_new_news.append({
                             "fields": {
                                 "Haber_Başlığı": title,
                                 "URL": full_link,
-                                "Haber_Ön_Yazı": desc
+                                "Haber_Ön_Yazı": desc,
+                                "Görsel": img_url  # Resim linkini buraya ekledik
                             }
                         })
                         existing_urls.add(full_link)
-                        found_2026_count += 1
+                        found_on_page += 1
 
-            print(f"Sayfa {page}: {found_2026_count} yeni haber bulundu.")
-            
-            # Eğer bu sayfada hiç 2026 haberi yoksa (veya hepsi mükerrerse bile 0 gelirse)
-            # Ama garantici olmak için sayfada en az bir tane 2026 tarihli yazı olup olmadığına bakıyoruz.
-            page_text = soup.get_text()
-            if "2026" not in page_text and page > 1:
-                print("Artık 2026 tarihli içerik bulunamadı, durduruluyor.")
-                break
-                
+            if found_on_page == 0 and page > 1: break
             page += 1
             time.sleep(1)
 
@@ -110,17 +95,16 @@ def start():
             print(f"Hata: {e}")
             break
 
-    # Airtable'a gönder
     if all_new_news:
-        print(f"Toplam {len(all_new_news)} haber Airtable'a yükleniyor...")
+        print(f"Toplam {len(all_new_news)} haber (resimleriyle beraber) yükleniyor...")
         for i in range(0, len(all_new_news), 10):
             batch = all_new_news[i:i+10]
             requests.post(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
                           json={"records": batch}, 
                           headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
-        print("Bitti! Tüm haberler başarıyla eklendi.")
+        print("Görsel destekli yükleme tamamlandı!")
     else:
-        print("Yeni haber bulunamadı.")
+        print("Yeni haber yok.")
 
 if __name__ == "__main__":
     start()
