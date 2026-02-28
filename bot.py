@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 
-# Ayarlar
+# SENİN YENİ AYARLARIN
 TABLE_NAME = "MAI_Radar" 
 AIRTABLE_TOKEN = os.environ['AIRTABLE_TOKEN']
 AIRTABLE_BASE_ID = os.environ['AIRTABLE_BASE_ID']
@@ -20,22 +20,25 @@ def get_news():
         
         news_list = []
         # Sitedeki haber başlıklarını tarar
-        for article in soup.find_all('h2', class_='entry-title'):
+        articles = soup.find_all('h2', class_='entry-title')
+        print(f"Sitede {len(articles)} adet haber bulundu.")
+        
+        for article in articles:
             title_element = article.find('a')
             if title_element:
                 title = title_element.get_text(strip=True)
                 link = title_element['href']
                 
-                # SÜTUN İSİMLERİ BURADA EŞLEŞİYOR
+                # SÜTUN İSİMLERİ BURADA (Haber_Metni ve URL)
                 news_list.append({
                     "fields": {
-                        "Haber_Metni": title, # Senin tablodaki isim
-                        "URL": link           # Senin tablodaki isim
+                        "Haber_Metni": title,
+                        "URL": link
                     }
                 })
         return news_list
     except Exception as e:
-        print(f"Hata: {e}")
+        print(f"Hata oluştu: {e}")
         return []
 
 def send_to_airtable(data):
@@ -49,13 +52,16 @@ def send_to_airtable(data):
         batch = data[i:i+10]
         try:
             response = requests.post(endpoint, json={"records": batch}, headers=headers)
-            print(f"Gönderim Durumu: {response.status_code}")
+            if response.status_code in [200, 201]:
+                print(f"{len(batch)} adet haber Airtable'a gönderildi.")
+            else:
+                print(f"Airtable Hatası ({response.status_code}): {response.text}")
         except Exception as e:
-            print(f"Airtable Hatası: {e}")
+            print(f"Gönderim sırasında teknik hata: {e}")
 
 if __name__ == "__main__":
     results = get_news()
     if results:
         send_to_airtable(results)
     else:
-        print("Haber bulunamadı.")
+        print("Gönderilecek veri bulunamadı.")
