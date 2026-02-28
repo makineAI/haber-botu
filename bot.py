@@ -13,7 +13,7 @@ def start():
         print("HATA: AIRTABLE_TOKEN bulunamadı!")
         return
 
-    # 1. Mevcut Kayıtları Çek
+    # 1. Mevcut Kayıtları Hafızaya Al (Mükerrer Kontrolü)
     existing_urls = set()
     try:
         r = requests.get(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
@@ -24,73 +24,73 @@ def start():
                 if u: existing_urls.add(u)
     except: pass
 
-    # 2. Siteyi Tara
+    # 2. Sayfa Sayfa Tarama
     new_records = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    for p in range(1, 11): # 10 sayfa tara
+    for p in range(1, 11): # 10 sayfaya kadar tara
         url = f"https://www.forummakina.com.tr/tr/haberler?page={p}"
-        print(f"Sayfa {p} inceleniyor...")
+        print(f"Sayfa {p} didik didik ediliyor...")
         
         try:
             res = requests.get(url, headers=headers, timeout=20)
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # Tüm haber bloklarını bul
-            items = soup.find_all('div', class_='col-md-4')
-            if not items: break
+            # Sitedeki tüm 'a' (link) etiketlerini bul
+            all_links = soup.find_all('a', href=True)
             
-            found_count = 0
-            for item in items:
-                # 2026 Kontrolü
-                if "2026" in item.get_text():
-                    # BAŞLIK: Önce 'title' class'ına bak, yoksa h3'e bak, o da yoksa ilk linke bak
-                    title_div = item.find('div', class_='title') or item.find('h3') or item.find('a')
-                    # URL: Haber kutusundaki ilk geçerli link
-                    link_tag = item.find('a', href=True)
-                    # ÖN YAZI: Önce span'a bak, yoksa p'ye bak
-                    desc_tag = item.find('span') or item.find('p')
+            found_on_page = 0
+            for link in all_links:
+                href = link['href']
+                # Sadece haber detayına giden linklere odaklan
+                if "/tr/haberler/" in href:
+                    full_link = "https://www.forummakina.com.tr" + href if not href.startswith('http') else href
                     
-                    if title_div and link_tag:
-                        href = link_tag['href']
-                        full_link = "https://www.forummakina.com.tr" + href if not href.startswith('http') else href
-                        
-                        if full_link not in existing_urls:
-                            title = title_div.get_text(strip=True)
-                            # Eğer başlık "DEVAMI" gibi çok kısaysa kutudaki en uzun metni almayı dene
-                            if len(title) < 10 and item.find('h3'):
-                                title = item.find('h3').get_text(strip=True)
-                                
-                            desc = desc_tag.get_text(strip=True) if desc_tag else "Detay haberde."
+                    # Eğer bu linki daha önce eklemediysek, tarihini kontrol et
+                    if full_link not in existing_urls:
+                        # Linkin içinde bulunduğu en yakın kapsayıcıyı (div) bul
+                        parent = link.find_parent('div')
+                        if parent and "2026" in parent.get_text():
+                            # Başlık: title class'ı veya linkin içindeki metin
+                            title_div = parent.find('div', class_='title')
+                            title = title_div.get_text(strip=True) if title_div else link.get_text(strip=True)
                             
-                            new_records.append({
-                                "fields": {
-                                    "Haber_Başlığı": title,
-                                    "URL": full_link,
-                                    "Haber_Ön_Yazı": desc
-                                }
-                            })
-                            found_count += 1
+                            # Ön Yazı: span etiketini ara
+                            span_tag = parent.find('span')
+                            desc = span_tag.get_text(strip=True) if span_tag else "Özet haber içeriğinde."
+                            
+                            # Eğer başlık hala çok kısaysa veya boşsa alma
+                            if len(title) > 15:
+                                new_records.append({
+                                    "fields": {
+                                        "Haber_Başlığı": title,
+                                        "URL": full_link,
+                                        "Haber_Ön_Yazı": desc
+                                    }
+                                })
+                                # Bu URL'yi mevcutlara ekle ki aynı sayfada tekrar bulmasın
+                                existing_urls.add(full_link)
+                                found_on_page += 1
             
-            print(f"Sayfa {p}: {found_count} adet 2026 haberi listeye alındı.")
-            if found_count == 0 and p > 1: break # 2026'lar bittiyse dur
+            print(f"Sayfa {p}: {found_on_page} adet yeni 2026 haberi listeye eklendi.")
+            if found_on_page == 0 and p > 1: break
             time.sleep(1)
             
         except Exception as e:
             print(f"Hata: {e}")
             break
 
-    # 3. Gönderim
+    # 3. Airtable'a Gönder
     if new_records:
-        print(f"Toplam {len(new_records)} yeni haber Airtable'a gönderiliyor...")
+        print(f"Toplam {len(new_records)} haber Airtable'a paketleniyor...")
         for i in range(0, len(new_records), 10):
             batch = new_records[i:i+10]
             requests.post(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
                           json={"records": batch}, 
                           headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
-        print("Bitti!")
+        print("Operasyon Başarılı!")
     else:
-        print("Eklenecek yeni haber bulunamadı.")
+        print("Üzgünüm, kriterlere uygun yeni haber yakalanamadı.")
 
 if __name__ == "__main__":
     start()
