@@ -9,86 +9,77 @@ AIRTABLE_TOKEN = os.environ['AIRTABLE_TOKEN']
 AIRTABLE_BASE_ID = os.environ['AIRTABLE_BASE_ID']
 
 def get_news():
+    # Haberler sayfasının kök adresi
     base_url = "https://www.forummakina.com.tr/tr/haberler?page="
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+    }
     
-    all_valid_news = []
-    page = 1
-    keep_searching = True
-
-    print("2026 Haberleri taranıyor...")
-
-    while keep_searching:
+    all_news = []
+    # Şimdilik test için ilk 3 sayfayı tarayalım (Sayıyı artırabilirsin)
+    for page in range(1, 4): 
         url = f"{base_url}{page}"
-        print(f"Sayfa {page} kontrol ediliyor: {url}")
+        print(f"Sayfa {page} taranıyor: {url}")
         
         try:
             response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code != 200:
+                print(f"Sayfa açılamadı, hata kodu: {response.status_code}")
+                break
+                
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Sitedeki haber kutularını bul (Haberler genellikle 'col-md-4' veya 'news-item' içindedir)
-            articles = soup.select('.news-card, .news-item, .col-md-4') # Genel seçiciler
+            # Sitedeki tüm linkleri bul
+            links = soup.find_all('a', href=True)
+            page_found = 0
             
-            if not articles:
-                print("Daha fazla haber bulunamadı veya sayfa sonuna gelindi.")
-                break
-
-            found_in_page = 0
-            for item in articles:
-                title_tag = item.find('h3') or item.find('h2')
-                link_tag = item.find('a', href=True)
-                date_tag = item.find(class_='date') or item.find('span') # Tarih alanı
-
-                if title_tag and link_tag:
-                    title = title_tag.get_text(strip=True)
-                    link = "https://www.forummakina.com.tr" + link_tag['href'] if not link_tag['href'].startswith('http') else link_tag['href']
-                    date_text = date_tag.get_text(strip=True) if date_tag else ""
-
-                    # 2026 Kontrolü (Tarih metni içinde 2026 geçiyor mu?)
-                    if "2026" in date_text:
-                        all_valid_news.append({
-                            "fields": {
-                                "Haber_Metni": title,
-                                "URL": link
-                            }
-                        })
-                        found_in_page += 1
-                    elif any(old_year in date_text for old_year in ["2025", "2024", "2023"]):
-                        # Eğer 2025 veya daha eski bir tarih gördüysek, aramayı durdur
-                        print(f"Eski tarih bulundu ({date_text}), tarama sonlandırılıyor.")
-                        keep_searching = False
-                        break
+            for link in links:
+                title = link.get_text(strip=True)
+                href = link['href']
+                
+                # FİLTRE: Başlık en az 30 karakter olsun (Menü linklerini elemek için)
+                # Ve linkin içinde "/haber/" veya benzeri bir yapı geçsin
+                if len(title) > 30 and ("/haber/" in href or "/tr/" in href):
+                    full_link = "https://www.forummakina.com.tr" + href if not href.startswith('http') else href
+                    
+                    all_news.append({
+                        "fields": {
+                            "Haber_Metni": title,
+                            "URL": full_link
+                        }
+                    })
+                    page_found += 1
             
-            print(f"Bu sayfada {found_in_page} adet 2026 haberi bulundu.")
+            print(f"Sayfa {page} bitti. {page_found} potansiyel haber bulundu.")
+            time.sleep(1) # Siteyi yormamak için kısa mola
             
-            # Eğer sayfada hiç 2026 haberi yoksa ve biz hala devam ediyorsak, 
-            # bazen tarih yazmıyor olabilir, birkaç sayfa daha bakıp emin olalım.
-            if found_in_page == 0 and page > 3: 
-                break
-
-            page += 1
-            time.sleep(1) # Siteyi yormamak için 1 saniye bekle
-
         except Exception as e:
-            print(f"Hata: {e}")
+            print(f"Sayfa {page} taranırken hata: {e}")
             break
 
-    # Aynı haberleri temizle
-    unique_news = {v['fields']['Haber_Metni']: v for v in all_valid_news}.values()
+    # Aynı başlığa sahip mükerrer kayıtları temizle
+    unique_news = {v['fields']['Haber_Metni']: v for v in all_news}.values()
+    print(f"TOPLAM: {len(unique_news)} benzersiz haber/link bulundu.")
     return list(unique_news)
 
 def send_to_airtable(data):
     endpoint = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{TABLE_NAME}"
-    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+        "Content-Type": "application/json"
+    }
     
     for i in range(0, len(data), 10):
         batch = data[i:i+10]
-        requests.post(endpoint, json={"records": batch}, headers=headers)
-        print(f"{len(batch)} haber Airtable'a eklendi.")
+        response = requests.post(endpoint, json={"records": batch}, headers=headers)
+        if response.status_code in [200, 201]:
+            print(f"{len(batch)} kayıt başarıyla Airtable'a iletildi.")
+        else:
+            print(f"Airtable Hatası: {response.text}")
 
 if __name__ == "__main__":
     results = get_news()
     if results:
         send_to_airtable(results)
     else:
-        print("Kriterlere uygun (2026) haber bulunamadı.")
+        print("Siteden veri çekilemedi. Seçicileri (Selectors) kontrol etmek gerekebilir.")
