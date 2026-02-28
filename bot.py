@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import os
 
 # AYARLAR
-TABLE_NAME = "MAI_Radar" 
+TABLE_NAME = "makine_AI" 
 AIRTABLE_TOKEN = os.environ['AIRTABLE_TOKEN']
 AIRTABLE_BASE_ID = os.environ['AIRTABLE_BASE_ID']
 
