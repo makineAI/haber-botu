@@ -3,94 +3,110 @@ from bs4 import BeautifulSoup
 import os
 import time
 
-# AYARLAR
+# AYARLAR (Airtable Bilgilerin)
 BASE_ID = "appC4JNkqLfVCEcna"
 TABLE_ID = "tbl1paeNlwYfvKQlP"
 TOKEN = os.environ.get('AIRTABLE_TOKEN')
 
+def get_airtable_data():
+    """Airtable'daki tüm mevcut URL'leri hafızaya alır (Mükerrer engelleme için)"""
+    existing_urls = set()
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}"
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    offset = None
+    
+    while True:
+        params = {"offset": offset} if offset else {}
+        r = requests.get(url, headers=headers, params=params)
+        data = r.json()
+        for record in data.get('records', []):
+            u = record.get('fields', {}).get('URL')
+            if u: existing_urls.add(u)
+        
+        offset = data.get('offset')
+        if not offset: break
+    return existing_urls
+
 def start():
     if not TOKEN:
-        print("HATA: AIRTABLE_TOKEN bulunamadı!")
+        print("HATA: TOKEN Tanımlanmamış!")
         return
 
-    # 1. Mevcut Kayıtları Hafızaya Al (Mükerrer Kontrolü)
-    existing_urls = set()
-    try:
-        r = requests.get(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
-                         headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20)
-        if r.status_code == 200:
-            for rec in r.json().get('records', []):
-                u = rec.get('fields', {}).get('URL')
-                if u: existing_urls.add(u)
-    except: pass
+    # 1. Önce Airtable'da ne var ne yok bakıyoruz
+    print("Mevcut kayıtlar kontrol ediliyor...")
+    existing_urls = get_airtable_data()
 
-    # 2. Sayfa Sayfa Tarama
-    new_records = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    
-    for p in range(1, 11): # 10 sayfaya kadar tara
-        url = f"https://www.forummakina.com.tr/tr/haberler?page={p}"
-        print(f"Sayfa {p} didik didik ediliyor...")
+    # 2. Sayfaları 1'den başlayarak tarıyoruz
+    all_new_news = []
+    page = 1
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    while True:
+        target_url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
+        print(f"Sayfa {page} taranıyor: {target_url}")
         
-        try:
-            res = requests.get(url, headers=headers, timeout=20)
-            soup = BeautifulSoup(res.text, 'html.parser')
+        res = requests.get(target_url, headers=headers)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # Haber kutularını buluyoruz
+        items = soup.find_all('div', class_='col-md-4')
+        
+        # Eğer sayfada hiç haber kutusu yoksa, sitenin sonuna gelmişizdir
+        if not items:
+            print("Sayfa bitti veya haber bulunamadı.")
+            break
             
-            # Sitedeki tüm 'a' (link) etiketlerini bul
-            all_links = soup.find_all('a', href=True)
-            
-            found_on_page = 0
-            for link in all_links:
-                href = link['href']
-                # Sadece haber detayına giden linklere odaklan
-                if "/tr/haberler/" in href:
+        found_2026_on_this_page = 0
+        
+        for item in items:
+            # Sadece 2026 tarihli olanları süzüyoruz
+            date_div = item.find('div', class_='date')
+            if date_div and "2026" in date_div.get_text():
+                
+                link_tag = item.find('a', href=True)
+                if link_tag:
+                    href = link_tag['href']
                     full_link = "https://www.forummakina.com.tr" + href if not href.startswith('http') else href
                     
-                    # Eğer bu linki daha önce eklemediysek, tarihini kontrol et
+                    # KRİTİK: Eğer bu URL Airtable'da YOKSA ve şu anki listemizde YOKSA ekle
                     if full_link not in existing_urls:
-                        # Linkin içinde bulunduğu en yakın kapsayıcıyı (div) bul
-                        parent = link.find_parent('div')
-                        if parent and "2026" in parent.get_text():
-                            # Başlık: title class'ı veya linkin içindeki metin
-                            title_div = parent.find('div', class_='title')
-                            title = title_div.get_text(strip=True) if title_div else link.get_text(strip=True)
-                            
-                            # Ön Yazı: span etiketini ara
-                            span_tag = parent.find('span')
-                            desc = span_tag.get_text(strip=True) if span_tag else "Özet haber içeriğinde."
-                            
-                            # Eğer başlık hala çok kısaysa veya boşsa alma
-                            if len(title) > 15:
-                                new_records.append({
-                                    "fields": {
-                                        "Haber_Başlığı": title,
-                                        "URL": full_link,
-                                        "Haber_Ön_Yazı": desc
-                                    }
-                                })
-                                # Bu URL'yi mevcutlara ekle ki aynı sayfada tekrar bulmasın
-                                existing_urls.add(full_link)
-                                found_on_page += 1
-            
-            print(f"Sayfa {p}: {found_on_page} adet yeni 2026 haberi listeye eklendi.")
-            if found_on_page == 0 and p > 1: break
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"Hata: {e}")
-            break
+                        title_div = item.find('div', class_='title')
+                        span_tag = item.find('span')
+                        
+                        title = title_div.get_text(strip=True) if title_div else "Başlıksız Haber"
+                        desc = span_tag.get_text(strip=True) if span_tag else "Detaylar haberde."
+                        
+                        all_new_news.append({
+                            "fields": {
+                                "Haber_Başlığı": title,
+                                "URL": full_link,
+                                "Haber_Ön_Yazı": desc
+                            }
+                        })
+                        existing_urls.add(full_link) # Listeye ekle ki aynı çalışmada tekrar gelmesin
+                        found_2026_on_this_page += 1
 
-    # 3. Airtable'a Gönder
-    if new_records:
-        print(f"Toplam {len(new_records)} haber Airtable'a paketleniyor...")
-        for i in range(0, len(new_records), 10):
-            batch = new_records[i:i+10]
+        print(f"Sayfa {page} bitti. {found_2026_on_this_page} adet yeni 2026 haberi alındı.")
+        
+        # Eğer bu sayfada hiç 2026 haberi bulamadıysak, eski yıllara geçmişizdir, taramayı bitiriyoruz.
+        if found_2026_on_this_page == 0:
+            print("Artık 2026 haberi kalmadı, işlem durduruluyor.")
+            break
+            
+        page += 1 # Sonraki sayfaya geç
+        time.sleep(1) # Siteyi yormamak için kısa bekleme
+
+    # 3. Toplanan tüm yeni haberleri Airtable'a gönder
+    if all_new_news:
+        print(f"Toplam {len(all_new_news)} yeni haber Airtable'a yükleniyor...")
+        for i in range(0, len(all_new_news), 10):
+            batch = all_new_news[i:i+10]
             requests.post(f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}", 
                           json={"records": batch}, 
                           headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
-        print("Operasyon Başarılı!")
+        print("Yükleme tamamlandı!")
     else:
-        print("Üzgünüm, kriterlere uygun yeni haber yakalanamadı.")
+        print("Eklenecek yeni haber bulunamadı.")
 
 if __name__ == "__main__":
     start()
