@@ -91,4 +91,43 @@ def scrape_makina_market_all(ex_urls, ex_titles):
     for slug, portal_adi in kategoriler.items():
         print(f"\n🔍 [TARAMA] {portal_adi}...")
         for page in range(1, 11):
-            url = f"https://makina-market.com.tr/category/{slug}/page/{
+            url = f"https://makina-market.com.tr/category/{slug}/page/{page}/"
+            try:
+                r = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
+                if r.status_code != 200: break
+                soup = BeautifulSoup(r.content, "html.parser")
+                articles = soup.find_all("article")
+                if not articles: break
+                
+                for art in articles:
+                    tarih = art.find("div", class_="cs-meta-date").get_text(strip=True) if art.find("div", class_="cs-meta-date") else ""
+                    if "2026" in tarih:
+                        title_tag = art.find("h2", class_="cs-entry__title")
+                        if not title_tag: continue
+                        baslik = title_tag.get_text(strip=True)
+                        link = title_tag.find("a")["href"]
+                        
+                        if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                        
+                        img_div = art.find("div", class_="cs-overlay-background")
+                        img_src = img_div.find("img")["src"] if img_div and img_div.find("img") else ""
+                        excerpt = art.find("div", class_="cs-entry__excerpt")
+                        metin = excerpt.get_text(strip=True) if excerpt else ""
+                        
+                        table.create({
+                            "haber_basligi": baslik,
+                            "gorsel": [{"url": clean_img(img_src, "https://makina-market.com.tr")}] if img_src else [],
+                            "haber_metni": metin,
+                            "portal": portal_adi,
+                            "url": link
+                        })
+                        print(f"✅ {portal_adi}: {baslik[:30]}...")
+                        ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+            except: break
+
+if __name__ == "__main__":
+    urls, titles = get_existing_data()
+    scrape_forum_makina(urls, titles)
+    scrape_lht(urls, titles)
+    scrape_makina_market_all(urls, titles)
+    print("\n🏁 Tüm portallar ve kategoriler başarıyla güncellendi!")
