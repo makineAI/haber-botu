@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from pyairtable import Api
 from dotenv import load_dotenv
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin, quote, urlparse
 
 load_dotenv()
 
@@ -18,13 +18,23 @@ table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID)
 def get_existing_data():
     try:
         records = table.all()
-        urls = [r['fields'].get('url') for r in records if 'url' in r['fields']]
-        return urls
+        return [r['fields'].get('url') for r in records if 'url' in r['fields']]
     except: return []
+
+def safe_url_encode(url):
+    """Linkteki boşlukları, parantezleri ve Türkçe karakterleri Airtable'ın seveceği hale getirir."""
+    if not url: return ""
+    # http'yi https yap (Airtable güvenli link sever)
+    url = url.replace("http://", "https://")
+    
+    # Linki parçala ve sadece yol (path) kısmını kodla
+    parsed = urlparse(url)
+    encoded_path = quote(parsed.path)
+    return f"https://{parsed.netloc}{encoded_path}"
 
 def scrape_forum_makina():
     existing_urls = get_existing_data()
-    print(f"🚀 Tarama Başladı... Mevcut: {len(existing_urls)}")
+    print(f"🚀 Forum Makina Taraması Başladı...")
 
     url = "https://www.forummakina.com.tr/tr/haberler"
     try:
@@ -39,31 +49,28 @@ def scrape_forum_makina():
             link = urljoin("https://www.forummakina.com.tr", link_tag["href"]) if link_tag else ""
 
             if link not in existing_urls:
-                # --- GÖRSEL TAMİRİ ---
+                # --- GÖRSEL TEMİZLEME OPERASYONU ---
                 img_tag = parent.find("img")
-                img_url = ""
-                if img_tag:
-                    raw_path = img_tag.get("src") or ""
-                    # Boşlukları ve özel karakterleri %20 formatına çevir
-                    if raw_path:
-                        # Önce domaini ekle, sonra path kısmındaki boşlukları quote ile temizle
-                        full_path = urljoin("https://www.forummakina.com.tr", raw_path)
-                        # Sadece son kısımdaki boşlukları temizleyelim
-                        img_url = full_url = full_path.replace(" ", "%20")
+                raw_img = img_tag.get("src") if img_tag else ""
+                
+                # Linki tam adrese çevir
+                full_raw_url = urljoin("https://www.forummakina.com.tr", raw_img)
+                # Boşlukları ve parantezleri temizle (v3)
+                final_img_url = safe_url_encode(full_raw_url)
 
-                print(f"🎬 Haber: {baslik[:30]}...")
-                print(f"🖼️ URL: {img_url}")
+                print(f"🎬 İşleniyor: {baslik[:30]}...")
+                print(f"🖼️ Temizlenmiş Link: {final_img_url}")
 
                 payload = {
                     "haber_basligi": baslik,
-                    "gorsel": img_url,
+                    "gorsel": final_img_url,
                     "haber_metni": parent.find("span").text.strip() if parent.find("span") else "",
                     "portal": "Forum Makina",
                     "url": link
                 }
                 
                 table.create(payload)
-                print("✅ Başarıyla eklendi.")
+                print("✅ Airtable'a gönderildi.")
                 
     except Exception as e:
         print(f"❌ Hata: {e}")
