@@ -22,19 +22,18 @@ def get_existing_data():
     except: return []
 
 def safe_url_encode(url):
-    """Linkteki boşlukları, parantezleri ve Türkçe karakterleri Airtable'ın seveceği hale getirir."""
+    """Linkteki boşluk ve parantezleri Airtable'ın dosyayı indirebileceği hale getirir."""
     if not url: return ""
-    # http'yi https yap (Airtable güvenli link sever)
+    # http'yi https yapıyoruz (Airtable güvenli bağlantıdan dosya çekmeyi sever)
     url = url.replace("http://", "https://")
-    
-    # Linki parçala ve sadece yol (path) kısmını kodla
     parsed = urlparse(url)
+    # Sadece dosya yolunu (path) encode ediyoruz, domaini ellemiyoruz
     encoded_path = quote(parsed.path)
     return f"https://{parsed.netloc}{encoded_path}"
 
 def scrape_forum_makina():
     existing_urls = get_existing_data()
-    print(f"🚀 Forum Makina Taraması Başladı...")
+    print(f"🚀 Forum Makina Taraması (Attachment Modu) Başladı...")
 
     url = "https://www.forummakina.com.tr/tr/haberler"
     try:
@@ -49,31 +48,38 @@ def scrape_forum_makina():
             link = urljoin("https://www.forummakina.com.tr", link_tag["href"]) if link_tag else ""
 
             if link not in existing_urls:
-                # --- GÖRSEL TEMİZLEME OPERASYONU ---
                 img_tag = parent.find("img")
                 raw_img = img_tag.get("src") if img_tag else ""
                 
-                # Linki tam adrese çevir
+                # 1. Linki tam adrese çevir ve temizle
                 full_raw_url = urljoin("https://www.forummakina.com.tr", raw_img)
-                # Boşlukları ve parantezleri temizle (v3)
                 final_img_url = safe_url_encode(full_raw_url)
 
                 print(f"🎬 İşleniyor: {baslik[:30]}...")
-                print(f"🖼️ Temizlenmiş Link: {final_img_url}")
+                print(f"🖼️ Hazırlanan Dosya Linki: {final_img_url}")
 
+                # 2. KRİTİK NOKTA: Attachment formatı budur! 
+                # Sadece link değil, [{"url": "link"}] şeklinde gönderilmeli.
                 payload = {
                     "haber_basligi": baslik,
-                    "gorsel": final_img_url,
+                    "gorsel": [{"url": final_img_url}], # Burası Attachment için özel format
                     "haber_metni": parent.find("span").text.strip() if parent.find("span") else "",
                     "portal": "Forum Makina",
                     "url": link
                 }
                 
-                table.create(payload)
-                print("✅ Airtable'a gönderildi.")
+                try:
+                    table.create(payload)
+                    print("✅ Resimle birlikte Airtable'a eklendi.")
+                except Exception as e:
+                    print(f"❌ Airtable Yazma Hatası: {e}")
+                    # Eğer hata verirse, resimsiz denesin (Sütun tipi uyuşmazlığı kontrolü için)
+                    print("⚠️ Resimsiz ekleme deneniyor...")
+                    payload["gorsel"] = []
+                    table.create(payload)
                 
     except Exception as e:
-        print(f"❌ Hata: {e}")
+        print(f"❌ Sistem Hatası: {e}")
 
 if __name__ == "__main__":
     scrape_forum_makina()
