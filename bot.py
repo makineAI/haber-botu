@@ -11,28 +11,32 @@ AIRTABLE_API_KEY = os.environ.get('AIRTABLE_TOKEN')
 AIRTABLE_BASE_ID = "appC4JNkqLfVCEcna"
 AIRTABLE_TABLE_ID = "tbl1paeNlwYfvKQlP"
 
+if not AIRTABLE_API_KEY:
+    print("HATA: AIRTABLE_TOKEN bulunamadı!")
+    exit(1)
+
 api = Api(AIRTABLE_API_KEY)
 table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID)
 
 def get_existing_data():
-    """Mükerrer kontrolü için mevcut verileri hafızaya alır."""
     try:
         records = table.all()
         urls = [r['fields'].get('url') for r in records if 'url' in r['fields']]
         titles = [r['fields'].get('haber_basliği', '').lower().strip() for r in records]
         return urls, titles
-    except: return [], []
-
-# --- SİTE FONKSİYONLARI (Buraya yeni siteler eklenebilir) ---
+    except Exception as e:
+        print(f"Airtable Hatası: {e}")
+        return [], []
 
 def scrape_forum_makina(existing_urls, existing_titles):
-    print("\n🔍 [SİTE: Forum Makina] Taranıyor...")
+    print("--- Forum Makina Taraması Başladı ---")
     page = 1
     while True:
         url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
-        print(f"📄 Sayfa {page} kontrol ediliyor...")
+        print(f"Sayfa {page} kontrol ediliyor...")
         try:
             r = requests.get(url, timeout=20)
+            if r.status_code != 200: break
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("div", class_="title")
             if not items: break
@@ -40,7 +44,8 @@ def scrape_forum_makina(existing_urls, existing_titles):
             found_2026 = False
             for item in items:
                 parent = item.find_parent()
-                tarih = parent.find("div", class_="date").text if parent.find("div", class_="date") else ""
+                tarih_div = parent.find("div", class_="date")
+                tarih = tarih_div.text.strip() if tarih_div else ""
                 
                 if "2026" in tarih:
                     found_2026 = True
@@ -55,25 +60,19 @@ def scrape_forum_makina(existing_urls, existing_titles):
                             "portal": "Forum Makina",
                             "url": link
                         })
-                        print(f"✅ Eklendi: {baslik[:50]}")
+                        print(f"Eklendi: {baslik[:50]}")
+                        existing_urls.append(link)
+                        existing_titles.append(baslik.lower().strip())
             
-            if not found_2026: break
+            if not found_2026: 
+                print("2026 haberi kalmadı, durduruluyor.")
+                break
             page += 1
-        except: break
-
-# --- ANA ÇALIŞTIRICI (ORKESTRA ŞEFİ) ---
-
-def main():
-    # 1. Mevcut verileri bir kez çek
-    existing_urls, existing_titles = get_existing_data()
-    
-    # 2. Siteleri sırayla çalıştır
-    scrape_forum_makina(existing_urls, existing_titles)
-    
-    # Yarın buraya şunu ekleyebilirsin:
-    # scrape_lht(existing_urls, existing_titles)
-    # scrape_makina_market(existing_urls, existing_titles)
+        except Exception as e:
+            print(f"Hata oluştu: {e}")
+            break
 
 if __name__ == "__main__":
-    main()
-    print("\n
+    ex_urls, ex_titles = get_existing_data()
+    scrape_forum_makina(ex_urls, ex_titles)
+    print("Islem Tamamlandi.")
