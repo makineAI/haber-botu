@@ -38,11 +38,13 @@ def clean_img(url, base_url):
 # --- SİTE 1: FORUM MAKİNA ---
 def scrape_forum_makina(ex_urls, ex_titles):
     print("\n🔍 [1/3] Forum Makina Taraması...")
-    for page in range(1, 4):
+    for page in range(1, 11): # 10 sayfa tarar
         try:
             r = requests.get(f"https://www.forummakina.com.tr/tr/haberler?page={page}", timeout=20)
             soup = BeautifulSoup(r.content, "html.parser")
-            for item in soup.find_all("li", class_="news"):
+            items = soup.find_all("li", class_="news")
+            if not items: break
+            for item in items:
                 date_div = item.find("div", class_="date")
                 tarih = date_div.get_text(strip=True) if date_div else ""
                 if "2026" in tarih:
@@ -55,19 +57,21 @@ def scrape_forum_makina(ex_urls, ex_titles):
                     img = clean_img(img_tag["src"], "https://www.forummakina.com.tr") if img_tag else ""
                     metin = item.find("span").get_text(strip=True).replace("devamı", "") if item.find("span") else ""
                     table.create({"haber_basligi": baslik, "gorsel": [{"url": img}] if img else [], "haber_metni": metin, "portal": "Forum Makina", "url": link})
-                    print(f"✅ Forum Makina: {baslik[:30]}...")
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: break
 
 # --- SİTE 2: LHT (LOJİSTİK HATTI) ---
 def scrape_lht(ex_urls, ex_titles):
     print("\n🔍 [2/3] LHT Taraması...")
-    for page in range(1, 3):
+    for page in range(1, 11): # 10 sayfa tarar
         url = f"https://www.lht.com.tr/kategori/haber/page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
+            if r.status_code != 200: break
             soup = BeautifulSoup(r.content, "html.parser")
-            for art in soup.find_all("article"):
+            articles = soup.find_all("article")
+            if not articles: break
+            for art in articles:
                 time_tag = art.find("time")
                 dt = time_tag.get("datetime", "") if time_tag else ""
                 if "2026" in dt:
@@ -82,19 +86,23 @@ def scrape_lht(ex_urls, ex_titles):
                     excerpt = art.find("p", class_="post-excerpt")
                     metin = excerpt.get_text(strip=True) if excerpt else ""
                     table.create({"haber_basligi": baslik, "gorsel": [{"url": final_img}] if final_img else [], "haber_metni": metin, "portal": "LHT", "url": link})
-                    print(f"✅ LHT: {baslik[:30]}...")
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: break
 
 # --- SİTE 3: MAKİNA MARKET ---
 def scrape_makina_market(ex_urls, ex_titles):
     print("\n🔍 [3/3] Makina Market Taraması...")
-    for page in range(1, 3):
+    for page in range(1, 11): # 10 sayfa tarar
         url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
+            if r.status_code != 200: 
+                print(f"⏹️ Sayfa {page} mevcut değil, durduruldu.")
+                break
             soup = BeautifulSoup(r.content, "html.parser")
-            for art in soup.find_all("article"):
+            articles = soup.find_all("article")
+            if not articles: break
+            for art in articles:
                 date_div = art.find("div", class_="cs-meta-date")
                 tarih = date_div.get_text(strip=True) if date_div else ""
                 if "2026" in tarih:
