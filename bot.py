@@ -37,7 +37,7 @@ def clean_img(url, base_url):
 
 # --- SİTE 1: FORUM MAKİNA ---
 def scrape_forum_makina(ex_urls, ex_titles):
-    print("\n🔍 [1/3] Forum Makina Taraması...")
+    print("\n🔍 [TARAMA] Forum Makina...")
     for page in range(1, 11):
         try:
             r = requests.get(f"https://www.forummakina.com.tr/tr/haberler?page={page}", timeout=20)
@@ -45,16 +45,12 @@ def scrape_forum_makina(ex_urls, ex_titles):
             items = soup.find_all("li", class_="news")
             if not items: break
             for item in items:
-                date_div = item.find("div", class_="date")
-                tarih = date_div.get_text(strip=True) if date_div else ""
+                tarih = item.find("div", class_="date").get_text(strip=True) if item.find("div", class_="date") else ""
                 if "2026" in tarih:
-                    title_div = item.find("div", class_="title")
-                    baslik = title_div.get_text(strip=True) if title_div else ""
-                    link_tag = item.find("a")
-                    link = urljoin("https://www.forummakina.com.tr", link_tag["href"]) if link_tag else ""
+                    baslik = item.find("div", class_="title").get_text(strip=True) if item.find("div", class_="title") else ""
+                    link = urljoin("https://www.forummakina.com.tr", item.find("a")["href"]) if item.find("a") else ""
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
-                    img_tag = item.find("img")
-                    img = clean_img(img_tag["src"], "https://www.forummakina.com.tr") if img_tag else ""
+                    img = clean_img(item.find("img")["src"], "https://www.forummakina.com.tr") if item.find("img") else ""
                     metin = item.find("span").get_text(strip=True).replace("devamı", "") if item.find("span") else ""
                     table.create({"haber_basligi": baslik, "gorsel": [{"url": img}] if img else [], "haber_metni": metin, "portal": "Forum Makina", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
@@ -62,76 +58,37 @@ def scrape_forum_makina(ex_urls, ex_titles):
 
 # --- SİTE 2: LHT (LOJİSTİK HATTI) ---
 def scrape_lht(ex_urls, ex_titles):
-    print("\n🔍 [2/3] LHT Taraması...")
+    print("\n🔍 [TARAMA] LHT...")
     for page in range(1, 11):
-        url = f"https://www.lht.com.tr/kategori/haber/page/{page}/"
         try:
-            r = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
+            r = requests.get(f"https://www.lht.com.tr/kategori/haber/page/{page}/", timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
             if r.status_code != 200: break
             soup = BeautifulSoup(r.content, "html.parser")
-            articles = soup.find_all("article")
-            if not articles: break
-            for art in articles:
-                time_tag = art.find("time")
-                dt = time_tag.get("datetime", "") if time_tag else ""
+            for art in soup.find_all("article"):
+                dt = art.find("time").get("datetime", "") if art.find("time") else ""
                 if "2026" in dt:
                     title_tag = art.find("h2", class_="entry-title")
                     if not title_tag: continue
                     baslik = title_tag.get_text(strip=True)
                     link = title_tag.find("a")["href"]
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
-                    img_thumb = art.find("div", class_="post-thumb")
-                    img_src = img_thumb.find("img")["src"] if img_thumb and img_thumb.find("img") else ""
-                    final_img = clean_img(img_src, "https://www.lht.com.tr")
-                    excerpt = art.find("p", class_="post-excerpt")
-                    metin = excerpt.get_text(strip=True) if excerpt else ""
-                    table.create({"haber_basligi": baslik, "gorsel": [{"url": final_img}] if final_img else [], "haber_metni": metin, "portal": "LHT", "url": link})
+                    img_src = art.find("div", class_="post-thumb").find("img")["src"] if art.find("div", class_="post-thumb") else ""
+                    table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, "https://www.lht.com.tr")}] if img_src else [], "portal": "LHT", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: break
 
-# --- SİTE 3: MAKİNA MARKET ---
-def scrape_makina_market(ex_urls, ex_titles):
-    print("\n🔍 [3/3] Makina Market - Haber Taraması...")
-    for page in range(1, 11): # 10 sayfa tarar
-        url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
-        try:
-            r = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
-            if r.status_code != 200: break
-            soup = BeautifulSoup(r.content, "html.parser")
-            articles = soup.find_all("article")
-            if not articles: break
-            for art in articles:
-                date_div = art.find("div", class_="cs-meta-date")
-                tarih = date_div.get_text(strip=True) if date_div else ""
-                if "2026" in tarih:
-                    title_tag = art.find("h2", class_="cs-entry__title")
-                    if not title_tag: continue
-                    baslik = title_tag.get_text(strip=True)
-                    link = title_tag.find("a")["href"]
-                    
-                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
-                    
-                    img_div = art.find("div", class_="cs-overlay-background")
-                    img_src = img_div.find("img")["src"] if img_div and img_div.find("img") else ""
-                    final_img = clean_img(img_src, "https://makina-market.com.tr")
-                    excerpt = art.find("div", class_="cs-entry__excerpt")
-                    metin = excerpt.get_text(strip=True) if excerpt else ""
-                    
-                    # Portal ismi güncellendi
-                    table.create({
-                        "haber_basligi": baslik, 
-                        "gorsel": [{"url": final_img}] if final_img else [], 
-                        "haber_metni": metin, 
-                        "portal": "Makina Market - Haber", 
-                        "url": link
-                    })
-                    print(f"✅ Makina Market - Haber: {baslik[:30]}...")
-                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-        except: break
+# --- SİTE 3: MAKİNA MARKET (TÜM KATEGORİLER) ---
+def scrape_makina_market_all(ex_urls, ex_titles):
+    kategoriler = {
+        "haberler": "Makina Market - Haber",
+        "saha-roportaji": "Makina Market - Saha Röportajı",
+        "roportaj": "Makina Market - Röportaj",
+        "proje-haberi": "Makina Market - Proje Haberi",
+        "urun-tanitimi": "Makina Market - Ürün Tanıtımı",
+        "yeni-urun": "Makina Market - Yeni Ürün"
+    }
 
-if __name__ == "__main__":
-    urls, titles = get_existing_data()
-    scrape_forum_makina(urls, titles)
-    scrape_lht(urls, titles)
-    scrape_makina_market(urls, titles)
-    print("\n🏁 İşlem Tamamlandı. Tüm portallar güncel!")
+    for slug, portal_adi in kategoriler.items():
+        print(f"\n🔍 [TARAMA] {portal_adi}...")
+        for page in range(1, 11):
+            url = f"https://makina-market.com.tr/category/{slug}/page/{
