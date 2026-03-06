@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from pyairtable import Api
 from dotenv import load_dotenv
 
-# .env dosyasındaki değişkenleri yükle
+# Yerel testler için .env yükler, GitHub Actions'da env verilerini okur
 load_dotenv()
 
 # --- AYARLAR ---
@@ -13,8 +13,8 @@ AIRTABLE_BASE_ID = "appC4JNkqLfVCEcna"
 AIRTABLE_TABLE_ID = "tbl1paeNlwYfvKQlP"
 
 if not AIRTABLE_API_KEY:
-    print("HATA: AIRTABLE_TOKEN bulunamadı!")
-    exit()
+    print("HATA: AIRTABLE_TOKEN bulunamadı! Lütfen GitHub Secrets veya .env kontrol et.")
+    exit(1)
 
 api = Api(AIRTABLE_API_KEY)
 table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID)
@@ -26,18 +26,17 @@ def get_existing_data():
         titles = [r['fields'].get('haber_basliği', '').lower().strip() for r in records]
         return urls, titles
     except Exception as e:
-        print(f"Airtable hatası: {e}")
+        print(f"Airtable veri çekme hatası: {e}")
         return [], []
 
 def scrape_data():
     existing_urls, existing_titles = get_existing_data()
-    print(f"Tarama Başladı... Mevcut Kayıt: {len(existing_titles)}")
+    print(f"Tarama Başladı... Mevcut Kayıt Sayısı: {len(existing_titles)}")
 
     # --- 1. FORUM MAKİNA ---
     print("\n[1/3] Forum Makina taranıyor...")
     page = 1
-    continue_scraping = True
-    while continue_scraping:
+    while True:
         url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
         try:
             r = requests.get(url, timeout=20)
@@ -55,15 +54,14 @@ def scrape_data():
                     if link not in existing_urls and baslik.lower().strip() not in existing_titles:
                         table.create({"haber_basliği": baslik, "gorsel": parent.find("img")["src"] if parent.find("img") else "", "haber_metni": parent.find("span").text.strip() if parent.find("span") else "", "portal": "Forum Makina", "url": link})
                         print(f"Eklendi: {baslik}")
-            if not found_2026: continue_scraping = False
+            if not found_2026: break
             page += 1
         except: break
 
     # --- 2. LHT ---
     print("\n[2/3] LHT taranıyor...")
     page = 1
-    continue_scraping = True
-    while continue_scraping:
+    while True:
         url = f"https://www.lht.com.tr/kategori/haber/page/{page}/"
         try:
             r = requests.get(url, timeout=20)
@@ -80,15 +78,14 @@ def scrape_data():
                     if link not in existing_urls and baslik.lower().strip() not in existing_titles:
                         table.create({"haber_basliği": baslik, "gorsel": article.find("img")["src"] if article.find("img") else "", "haber_metni": article.find("p", class_="post-excerpt").text.strip() if article.find("p") else "", "portal": "LHT", "url": link})
                         print(f"Eklendi: {baslik}")
-            if not found_2026: continue_scraping = False
+            if not found_2026: break
             page += 1
         except: break
 
     # --- 3. MAKİNA MARKET ---
     print("\n[3/3] Makina Market taranıyor...")
     page = 1
-    continue_scraping = True
-    while continue_scraping:
+    while True:
         url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
         try:
             r = requests.get(url, timeout=20)
@@ -105,9 +102,10 @@ def scrape_data():
                     if link not in existing_urls and baslik.lower().strip() not in existing_titles:
                         table.create({"haber_basliği": baslik, "gorsel": entry.find("img")["src"] if entry.find("img") else "", "haber_metni": entry.find("div", class_="cs-entry__excerpt").text.strip() if entry.find("div") else "", "portal": "Makina Market", "url": link})
                         print(f"Eklendi: {baslik}")
-            if not found_2026: continue_scraping = False
+            if not found_2026: break
             page += 1
         except: break
 
 if __name__ == "__main__":
     scrape_data()
+    print("\nİşlem Başarıyla Tamamlandı!")
