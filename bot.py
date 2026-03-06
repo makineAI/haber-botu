@@ -9,11 +9,7 @@ load_dotenv()
 # --- AYARLAR ---
 AIRTABLE_API_KEY = os.environ.get('AIRTABLE_TOKEN')
 AIRTABLE_BASE_ID = "appC4JNkqLfVCEcna"
-AIRTABLE_TABLE_ID = "tbl1paeNlwYfvKQlP"
-
-if not AIRTABLE_API_KEY:
-    print("HATA: AIRTABLE_TOKEN bulunamadı!")
-    exit(1)
+AIRTABLE_TABLE_ID = "tbl1paeNlwYfvKQlP" # ID değişmediği için bu kalsın
 
 api = Api(AIRTABLE_API_KEY)
 table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID)
@@ -21,22 +17,20 @@ table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID)
 def get_existing_data():
     try:
         records = table.all()
+        # Sütun isimlerini burada da 'i' harfiyle güncelledik
         urls = [r['fields'].get('url') for r in records if 'url' in r['fields']]
-        titles = [r['fields'].get('haber_basliği', '').lower().strip() for r in records]
+        titles = [r['fields'].get('haber_basligi', '').lower().strip() for r in records]
         return urls, titles
-    except Exception as e:
-        print(f"Airtable Hatası: {e}")
-        return [], []
+    except: return [], []
 
 def scrape_forum_makina(existing_urls, existing_titles):
-    print("--- Forum Makina Taraması Başladı ---")
+    print("\n--- Forum Makina Taraması Başladı ---")
     page = 1
     while True:
         url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
-        print(f"Sayfa {page} kontrol ediliyor...")
+        print(f"Sayfa {page} taranıyor...")
         try:
             r = requests.get(url, timeout=20)
-            if r.status_code != 200: break
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("div", class_="title")
             if not items: break
@@ -44,8 +38,7 @@ def scrape_forum_makina(existing_urls, existing_titles):
             found_2026 = False
             for item in items:
                 parent = item.find_parent()
-                tarih_div = parent.find("div", class_="date")
-                tarih = tarih_div.text.strip() if tarih_div else ""
+                tarih = parent.find("div", class_="date").text.strip() if parent.find("div", class_="date") else ""
                 
                 if "2026" in tarih:
                     found_2026 = True
@@ -53,26 +46,30 @@ def scrape_forum_makina(existing_urls, existing_titles):
                     link = "https://www.forummakina.com.tr" + parent.find("a")["href"]
                     
                     if link not in existing_urls and baslik.lower().strip() not in existing_titles:
-                        table.create({
-                            "haber_basliği": baslik,
+                        # BURADAKİ ANAHTARLAR AİRTABLE SÜTUNLARIYLA AYNI OLMALI
+                        payload = {
+                            "haber_basligi": baslik, # 'i' harfine dikkat!
                             "gorsel": parent.find("img")["src"] if parent.find("img") else "",
                             "haber_metni": parent.find("span").text.strip() if parent.find("span") else "",
                             "portal": "Forum Makina",
                             "url": link
-                        })
-                        print(f"Eklendi: {baslik[:50]}")
-                        existing_urls.append(link)
-                        existing_titles.append(baslik.lower().strip())
+                        }
+                        
+                        try:
+                            table.create(payload)
+                            print(f"✅ Eklendi: {baslik[:40]}...")
+                            existing_urls.append(link)
+                            existing_titles.append(baslik.lower().strip())
+                        except Exception as e:
+                            print(f"❌ Airtable Hatası: {e}")
+                            return # Hatayı gör diye durduruyoruz
             
-            if not found_2026: 
-                print("2026 haberi kalmadı, durduruluyor.")
-                break
+            if not found_2026: break
             page += 1
         except Exception as e:
-            print(f"Hata oluştu: {e}")
+            print(f"Bağlantı Hatası: {e}")
             break
 
 if __name__ == "__main__":
     ex_urls, ex_titles = get_existing_data()
     scrape_forum_makina(ex_urls, ex_titles)
-    print("Islem Tamamlandi.")
