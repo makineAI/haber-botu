@@ -36,7 +36,7 @@ def safe_create(fields):
     try:
         table.create(fields)
         print(f"   🚀 Kaydedildi: {fields['haber_basligi'][:50]}...")
-        time.sleep(0.3) # Airtable hız sınırı koruması
+        time.sleep(0.4) 
     except Exception as e:
         print(f"   ❌ HATA: {e}")
 
@@ -44,9 +44,7 @@ def clean_img(url, base_url):
     if not url or "data:image" in url: return ""
     try:
         full_url = urljoin(base_url, url).replace("http://", "https://")
-        parts = full_url.split("/")
-        file_part = quote(parts[-1])
-        return "/".join(parts[:-1]) + "/" + file_part
+        return full_url
     except: return ""
 
 # ==========================================
@@ -96,55 +94,63 @@ def scrape_lht(ex_urls, ex_titles):
         except: continue
 
 # ==========================================
-# 3. MAKİNA MARKET (GÜNCELLENMİŞ)
+# 3. MAKİNA MARKET
 # ==========================================
 def scrape_makina_market(ex_urls, ex_titles):
     print(f"\n--- [3/10] Makina Market ---")
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    for page in range(1, 5):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    for page in range(1, 4):
         url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
         try:
-            r = requests.get(url, timeout=15, headers=headers)
+            r = requests.get(url, timeout=20, headers=headers)
             soup = BeautifulSoup(r.content, "html.parser")
-            for art in soup.find_all("article"):
-                date_tag = art.select_one(".cs-meta-date, time")
-                if date_tag and CURRENT_YEAR in date_tag.get_text():
-                    title_tag = art.find("h2"); baslik = title_tag.get_text(strip=True); link = title_tag.find("a")["href"]
-                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
-                    img_tag = art.find("img"); img_src = img_tag.get("data-src") or img_tag.get("src") if img_tag else ""
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": "", "portal": "Makina Market", "url": link})
-                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+            articles = soup.find_all("article")
+            for art in articles:
+                title_tag = art.find("h2")
+                if not title_tag: continue
+                link = title_tag.find("a")["href"]
+                baslik = title_tag.get_text(strip=True)
+                if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                
+                img_tag = art.find("img")
+                img_src = img_tag.get("data-src") or img_tag.get("src") if img_tag else ""
+                
+                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": "Makina Market", "url": link})
+                ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: continue
 
 # ==========================================
-# 4, 5, 6. FORMEN (GÜNCELLENMİŞ)
+# 4, 5, 6. FORMEN 
 # ==========================================
 def process_formen(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for page in range(1, 4):
         url = f"{base_url}page/{page}/"
         try:
-            r = requests.get(url, timeout=15, headers=headers)
+            r = requests.get(url, timeout=20, headers=headers)
             soup = BeautifulSoup(r.content, "html.parser")
-            items = soup.select(".tdb_module_loop, .td_module_wrap")
+            items = soup.select(".tdb_module_loop, .td_module_wrap, .td_module_10, .td_module_mx1")
             for item in items:
-                time_tag = item.find("time")
-                if time_tag and CURRENT_YEAR in (time_tag.get("datetime", "") or time_tag.get_text()):
-                    title_tag = item.find("h3"); link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
-                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
-                    img_tag = item.find("img")
-                    img_src = img_tag.get("data-img-url") or img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": "", "portal": portal_name, "url": link})
-                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                title_tag = item.find("h3") or item.find("h2")
+                if not title_tag or not title_tag.find("a"): continue
+                link = title_tag.find("a")["href"]
+                baslik = title_tag.get_text(strip=True)
+                if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                
+                img_tag = item.find("img")
+                img_src = img_tag.get("data-img-url") or img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
+                
+                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": portal_name, "url": link})
+                ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: continue
 
 # ==========================================
-# 7, 8. İSTİF MH (DEDEKTİF MODU: İÇERİ GİRER)
+# 7, 8. İSTİF MH (GÜÇLENDİRİLMİŞ TARİH KONTROLÜ)
 # ==========================================
 def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for page in range(1, 4):
         url = f"{base_url}page/{page}/"
         try:
@@ -152,35 +158,40 @@ def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("div", class_="kanews-post-item")
             for item in items:
-                title_tag = item.find("h3"); link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
+                title_tag = item.find("h3")
+                if not title_tag: continue
+                link = title_tag.find("a")["href"]
+                baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # İÇERİ GİRİP NET TARİH KONTROLÜ
+                img_tag = item.find("img")
+                img_src = img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
+                
+                # KRİTİK DÜZELTME: Metinde bulamazsan görsel yolunda (wp-content/uploads/2026/..) ara
                 is_valid = False
-                try:
-                    ir = requests.get(link, timeout=10, headers=headers)
-                    isoup = BeautifulSoup(ir.content, "html.parser")
-                    meta_date = isoup.find("meta", property="article:published_time")
-                    time_tag = isoup.find("time")
-                    date_str = (meta_date.get("content", "") if meta_date else "") + (time_tag.get_text() if time_tag else "")
-                    if CURRENT_YEAR in date_str: is_valid = True
-                except: pass
+                if CURRENT_YEAR in str(item) or (img_src and CURRENT_YEAR in img_src):
+                    is_valid = True
+                
+                if not is_valid: # Hala emin değilsek içeri gir
+                    try:
+                        ir = requests.get(link, timeout=10, headers=headers)
+                        if CURRENT_YEAR in ir.text: is_valid = True
+                    except: pass
 
                 if is_valid:
-                    img_tag = item.find("img"); img_src = img_tag.get("data-src") or img_tag.get("src") if img_tag else ""
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": "", "portal": portal_name, "url": link})
+                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 else:
-                    print(f"   ⏭️ Eski/Geçersiz Tarih Atlandı: {baslik[:30]}")
+                    print(f"   ⏭️ Eski Tarih Atlandı: {baslik[:30]}")
         except: continue
 
 # ==========================================
-# 9. MADEN OCAK (SAYFA GEÇİŞLİ)
+# 9. MADEN OCAK
 # ==========================================
 def scrape_maden_ocak(ex_urls, ex_titles):
     print(f"\n--- [9/10] Maden Ocak ---")
     headers = {'User-Agent': 'Mozilla/5.0'}
-    for page in range(1, 6): # Sayfaları tek tek gezer
+    for page in range(1, 6):
         url = f"https://www.madenveocak.com.tr/kategori/haber/page/{page}/"
         try:
             r = requests.get(url, timeout=15, headers=headers)
