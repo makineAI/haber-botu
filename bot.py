@@ -162,6 +162,75 @@ def scrape_formen(ex_urls, ex_titles):
             page += 1
         except: break
 
+# --- SİTE 5: İSTİF MH - DETAYDAN TARİH ALAN VERSİYON ---
+def scrape_istif_mh(ex_urls, ex_titles):
+    print(f"\n🔍 [5/5] İstif MH - Haber Taraması (Derin Tarama) Başladı...")
+    page = 1
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    while True:
+        url = f"https://istifmaterialhandling.com/category/haber/page/{page}/"
+        try:
+            r = requests.get(url, timeout=20, headers=headers)
+            if r.status_code != 200: break
+                
+            soup = BeautifulSoup(r.content, "html.parser")
+            items = soup.find_all("div", class_="kanews-post-item")
+            if not items: break
+            
+            new_added = 0
+            for item in items:
+                title_tag = item.find("h3", class_="kanews-post-headline")
+                if not title_tag: continue
+                link = title_tag.find("a")["href"]
+                baslik = title_tag.get_text(strip=True)
+                
+                # Mükerrer Kontrolü (Airtable'da varsa hiç içeri girme)
+                if link.lower() in ex_urls or baslik.lower() in ex_titles:
+                    continue
+                
+                # --- DERİN TARAMA: Haberin içine girip net tarihi alalım ---
+                print(f"   ∟ Detay okunuyor: {baslik[:30]}...")
+                try:
+                    r_detail = requests.get(link, timeout=10, headers=headers)
+                    soup_detail = BeautifulSoup(r_detail.content, "html.parser")
+                    
+                    # Detay sayfasındaki tarih divini/spanını bul (Genelde meta alanında olur)
+                    # Not: Sitenin detay yapısında tarih genelde 'kanews-post-date' içindedir
+                    detail_date_tag = soup_detail.find("span", class_="kanews-post-date") or \
+                                      soup_detail.find("time")
+                    net_tarih = detail_date_tag.get_text(strip=True) if detail_date_tag else "Tarih Belirsiz"
+                except:
+                    net_tarih = "Okunamadı"
+
+                # Sadece 2026 haberlerini alalım (veya güncel olanları)
+                if CURRENT_YEAR not in net_tarih:
+                    # Eğer çok eski bir yıla geldiysek (2025, 2024 vb.) durabiliriz
+                    if any(year in net_tarih for year in ["2025", "2024"]):
+                        print(f"   ℹ️ Eski yıla ulaşıldı ({net_tarih}), tarama duruyor.")
+                        return 
+
+                img_tag = item.find("img")
+                img_src = clean_img(img_tag.get("src") or img_tag.get("data-src"), url) if img_tag else ""
+                
+                # Airtable Kayıt
+                table.create({
+                    "haber_basligi": baslik,
+                    "gorsel": [{"url": img_src}] if img_src else [],
+                    "haber_metni": f"Net Yayın Tarihi: {net_tarih}",
+                    "portal": "İstif MH - Haber",
+                    "url": link
+                })
+                print(f"✅ Eklendi: {baslik[:30]} | Tarih: {net_tarih}")
+                ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                new_added += 1
+
+            if new_added == 0: break
+            page += 1
+        except Exception as e:
+            print(f"⚠️ İstif MH Hatası: {e}")
+            break
+
 if __name__ == "__main__":
     urls, titles = get_existing_data()
     scrape_forum_makina(urls, titles)
