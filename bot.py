@@ -39,7 +39,7 @@ def clean_img(url, base_url):
 
 # --- 1. FORUM MAKİNA ---
 def scrape_forum_makina(ex_urls, ex_titles):
-    print(f"\n🔍 [1/4] Forum Makina ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [1/5] Forum Makina ({CURRENT_YEAR}) Taraması...")
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     while True:
@@ -68,7 +68,7 @@ def scrape_forum_makina(ex_urls, ex_titles):
 
 # --- 2. LHT ---
 def scrape_lht(ex_urls, ex_titles):
-    print(f"\n🔍 [2/4] LHT ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [2/5] LHT ({CURRENT_YEAR}) Taraması...")
     page = 1
     while True:
         url = f"https://www.lht.com.tr/kategori/haber/page/{page}/"
@@ -98,7 +98,7 @@ def scrape_lht(ex_urls, ex_titles):
 
 # --- 3. MAKİNA MARKET ---
 def scrape_makina_market_ana(ex_urls, ex_titles):
-    print(f"\n🔍 [3/4] Makina Market ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [3/5] Makina Market ({CURRENT_YEAR}) Taraması...")
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     while True:
@@ -121,6 +121,7 @@ def scrape_makina_market_ana(ex_urls, ex_titles):
                     img_tag = art.find("img")
                     img_src = img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
                     metin = art.find("div", class_="cs-entry__excerpt").get_text(strip=True) if art.find("div", class_="cs-entry__excerpt") else ""
+                    # PORTAL ADI GÜNCELLENDİ
                     table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": "Makina Market", "url": link})
                     print(f"✅ Makina Market: {baslik[:30]}")
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
@@ -131,7 +132,7 @@ def scrape_makina_market_ana(ex_urls, ex_titles):
 
 # --- 4. FORMEN DERGİSİ ---
 def scrape_formen(ex_urls, ex_titles):
-    print(f"\n🔍 [4/4] Formen Dergisi ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [4/5] Formen Dergisi ({CURRENT_YEAR}) Taraması...")
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     while True:
@@ -162,9 +163,9 @@ def scrape_formen(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- SİTE 5: İSTİF MH - DETAYDAN TARİH ALAN VERSİYON ---
+# --- 5. İSTİF MH - TEMİZLENMİŞ VERSİYON ---
 def scrape_istif_mh(ex_urls, ex_titles):
-    print(f"\n🔍 [5/5] İstif MH - Haber Taraması (Derin Tarama) Başladı...")
+    print(f"\n🔍 [5/5] İstif MH - Haber Taraması Başladı...")
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     
@@ -173,73 +174,57 @@ def scrape_istif_mh(ex_urls, ex_titles):
         try:
             r = requests.get(url, timeout=20, headers=headers)
             if r.status_code != 200: break
-                
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("div", class_="kanews-post-item")
             if not items: break
             
-            new_added = 0
             for item in items:
                 title_tag = item.find("h3", class_="kanews-post-headline")
                 if not title_tag: continue
                 link = title_tag.find("a")["href"]
                 baslik = title_tag.get_text(strip=True)
                 
-                # Mükerrer Kontrolü (Airtable'da varsa hiç içeri girme)
-                if link.lower() in ex_urls or baslik.lower() in ex_titles:
-                    continue
+                if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # --- DERİN TARAMA: Haberin içine girip net tarihi alalım ---
-                print(f"   ∟ Detay okunuyor: {baslik[:30]}...")
+                # DERİN TARAMA: Tarih kontrolü için içeri gir
                 try:
                     r_detail = requests.get(link, timeout=10, headers=headers)
                     soup_detail = BeautifulSoup(r_detail.content, "html.parser")
+                    # Sitenin detay sayfasında gerçek tarih genelde 'time' veya meta taglarındadır
+                    detail_date = soup_detail.get_text() # En garanti yol tüm metinde yıl aramak
                     
-                    # Detay sayfasındaki tarih divini/spanını bul (Genelde meta alanında olur)
-                    # Not: Sitenin detay yapısında tarih genelde 'kanews-post-date' içindedir
-                    detail_date_tag = soup_detail.find("span", class_="kanews-post-date") or \
-                                      soup_detail.find("time")
-                    net_tarih = detail_date_tag.get_text(strip=True) if detail_date_tag else "Tarih Belirsiz"
-                except:
-                    net_tarih = "Okunamadı"
-
-                # Sadece 2026 haberlerini alalım (veya güncel olanları)
-                if CURRENT_YEAR not in net_tarih:
-                    # Eğer çok eski bir yıla geldiysek (2025, 2024 vb.) durabiliriz
-                    if any(year in net_tarih for year in ["2025", "2024"]):
-                        print(f"   ℹ️ Eski yıla ulaşıldı ({net_tarih}), tarama duruyor.")
-                        return 
+                    # Eğer metinde 2025 veya 2024 geçiyorsa ve 2026 geçmiyorsa eski haberdir
+                    if any(old in detail_date for old in ["2025", "2024"]) and CURRENT_YEAR not in detail_date:
+                        print(f"   ℹ️ Eski haber atlandı (2025/2024): {baslik[:30]}")
+                        continue
+                except: pass
 
                 img_tag = item.find("img")
                 img_src = clean_img(img_tag.get("src") or img_tag.get("data-src"), url) if img_tag else ""
                 
-                # Airtable Kayıt
+                # Haber metni boş ("") olarak gönderiliyor
                 table.create({
                     "haber_basligi": baslik,
                     "gorsel": [{"url": img_src}] if img_src else [],
-                    "haber_metni": f"Net Yayın Tarihi: {net_tarih}",
+                    "haber_metni": "", 
                     "portal": "İstif MH - Haber",
                     "url": link
                 })
-                print(f"✅ Eklendi: {baslik[:30]} | Tarih: {net_tarih}")
+                print(f"✅ İstif MH Eklendi: {baslik[:30]}")
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                new_added += 1
 
-            if new_added == 0: break
             page += 1
-        except Exception as e:
-            print(f"⚠️ İstif MH Hatası: {e}")
-            break
+            if page > 5: break # Çok geriye gitmeyi engellemek için güvenlik sınırı
+        except: break
 
 if __name__ == "__main__":
-    urls, titles = get_existing_data()  # <-- Bu satır if'in bir tık içinde olmalı
+    urls, titles = get_existing_data()
     print(f"📊 Airtable'da şu an toplam {len(urls)} adet kayıtlı link var.")
     
-    # Tüm fonksiyonlar aynı hizada (içeride) olmalı
     scrape_forum_makina(urls, titles)
     scrape_lht(urls, titles)
     scrape_makina_market_ana(urls, titles)
     scrape_formen(urls, titles)
     scrape_istif_mh(urls, titles) 
 
-    print(f"\n🏁 Tarama bitti!")
+    print(f"\n🏁 İşlem Tamamlandı!")
