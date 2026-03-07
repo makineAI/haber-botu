@@ -1,15 +1,16 @@
-name: Haber Botu Calistir
+name: Haber Botu Otomatik Calistir
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Her gün sabah 08:00 (UTC)
-  workflow_dispatch: # Manuel çalıştırma butonu
+    - cron: '0 8 * * *' # Her gün Türkiye saatiyle 11:00 (UTC 08:00)
+  workflow_dispatch: # Manuel çalıştırma butonu ekler
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Depoyu Kopyala
+        uses: actions/checkout@v3
 
       - name: Python Kurulumu
         uses: actions/setup-python@v4
@@ -23,5 +24,5 @@ jobs:
 
       - name: Botu Calistir
         env:
-          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }} # GitHub Secrets'tan alır
         run: python bot.py
