@@ -159,46 +159,78 @@ def scrape_makina_market(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- SİTE 4: MAKİNA MARKET - SAHA RÖPORTAJI ---
+# --- SİTE 4: MAKİNA MARKET - SAHA RÖPORTAJI (GÜNCELLENDİ) ---
 def scrape_saha_roportaji(ex_urls, ex_titles):
     print(f"\n🔍 [4/4] Makina Market - Saha Röportajı ({CURRENT_YEAR}) Taraması Başladı...")
     page = 1
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,image/apng,*/*;q=0.8'
+    }
+
     while True:
         url = f"https://makina-market.com.tr/category/saha-roportaji/page/{page}/"
         try:
-            r = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
-            if r.status_code != 200: break
+            r = requests.get(url, timeout=20, headers=headers)
+            if r.status_code != 200: 
+                print(f"   ℹ️ Sayfa {page} bulunamadı veya bitti.")
+                break
+                
             soup = BeautifulSoup(r.content, "html.parser")
             articles = soup.find_all("article")
             if not articles: break
             
             found_year_in_page = False
             for art in articles:
+                # Tarih kısmını daha esnek kontrol ediyoruz
                 date_div = art.find("div", class_="cs-meta-date")
-                tarih = date_div.get_text(strip=True) if date_div else ""
+                tarih_metni = date_div.get_text(strip=True) if date_div else ""
                 
-                if CURRENT_YEAR in tarih:
+                # Eğer tarih metni içinde '2026' geçiyorsa işle
+                if CURRENT_YEAR in tarih_metni:
                     found_year_in_page = True
                     title_tag = art.find("h2", class_="cs-entry__title")
                     if not title_tag: continue
+                    
                     baslik = title_tag.get_text(strip=True)
                     link = title_tag.find("a")["href"]
                     
-                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                    # Mükerrer Kontrolü
+                    if link.lower() in ex_urls or baslik.lower() in ex_titles:
+                        continue
                     
-                    img_div = art.find("div", class_="cs-overlay-background")
-                    img_src = img_div.find("img")["src"] if img_div and img_div.find("img") else ""
+                    # Görsel Çekme
+                    img_tag = art.find("img")
+                    img_src = img_tag["src"] if img_tag and "src" in img_tag.attrs else ""
                     final_img = clean_img(img_src, "https://makina-market.com.tr")
+                    
+                    # Özet Metin
                     excerpt = art.find("div", class_="cs-entry__excerpt")
                     metin = excerpt.get_text(strip=True) if excerpt else ""
                     
-                    table.create({"haber_basligi": baslik, "gorsel": [{"url": final_img}] if final_img else [], "haber_metni": metin, "portal": "Makina Market - Saha Röportajı", "url": link})
-                    print(f"✅ Saha Röportajı: {baslik[:30]}")
-                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                    # Airtable'a Gönder
+                    table.create({
+                        "haber_basligi": baslik, 
+                        "gorsel": [{"url": final_img}] if final_img else [], 
+                        "haber_metni": metin, 
+                        "portal": "Makina Market - Saha Röportajı", 
+                        "url": link
+                    })
+                    print(f"✅ Saha Röportajı Eklendi: {baslik[:40]}...")
+                    
+                    # Hafızaya ekle (Hemen güncellensin)
+                    ex_urls.add(link.lower())
+                    ex_titles.add(baslik.lower())
             
-            if not found_year_in_page: break
+            # Eğer bu sayfada bu yıla ait hiç haber yoksa alt sayfalara bakma
+            if not found_year_in_page:
+                print(f"   ℹ️ {CURRENT_YEAR} yılına ait içerik bitti.")
+                break
+                
             page += 1
-        except: break
+        except Exception as e:
+            print(f"   ⚠️ Hata oluştu: {e}")
+            break
 
 if __name__ == "__main__":
     urls, titles = get_existing_data()
