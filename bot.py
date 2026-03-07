@@ -176,6 +176,84 @@ def scrape_makina_market_ana(ex_urls, ex_titles):
             print(f"⚠️ Makina Market Hatası: {e}")
             break
 
+# --- SİTE 4: FORMEN DERGİSİ ---
+def scrape_formen(ex_urls, ex_titles):
+    print(f"\n🔍 [4/4] Formen Dergisi ({CURRENT_YEAR}) Taraması Başladı...")
+    page = 1
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    }
+
+    while True:
+        # Formen Dergisi sayfa yapısı
+        url = f"https://formendergisi.com/haber/page/{page}/"
+        try:
+            r = requests.get(url, timeout=20, headers=headers)
+            if r.status_code != 200: break
+                
+            soup = BeautifulSoup(r.content, "html.parser")
+            # TagDiv modüllerini buluyoruz
+            modules = soup.find_all("div", class_="tdb_module_loop")
+            if not modules: break
+            
+            found_year_in_page = False
+            for mod in modules:
+                # 1. Tarih Tespiti (datetime="2026-03-05...")
+                time_tag = mod.find("time", class_="entry-date")
+                dt_str = time_tag.get("datetime", "") if time_tag else ""
+                
+                if CURRENT_YEAR in dt_str:
+                    found_year_in_page = True
+                    
+                    # 2. Başlık ve Link
+                    title_tag = mod.find("h3", class_="entry-title")
+                    if not title_tag: continue
+                    link_tag = title_tag.find("a")
+                    
+                    baslik = link_tag.get("title") or link_tag.get_text(strip=True)
+                    link = link_tag["href"]
+                    
+                    if link.lower() in ex_urls or baslik.lower() in ex_titles:
+                        continue
+                    
+                    # 3. Görsel Çekme (Formen'de görsel data-img-url içindedir)
+                    img_span = mod.find("span", class_="entry-thumb")
+                    img_src = ""
+                    if img_span:
+                        img_src = img_span.get("data-img-url") or img_span.get("style")
+                        # Eğer style içindeyse temizle (background-image: url("..."))
+                        if "url(" in img_src:
+                            img_src = img_src.split('url("')[1].split('")')[0]
+                    
+                    final_img = clean_img(img_src, "https://formendergisi.com")
+                    
+                    # 4. Haber Özeti (Formen'de bazen meta info içinde kısa özet olur)
+                    # Eğer modül içinde özet divi yoksa boş bırakıyoruz
+                    metin_div = mod.find("div", class_="td-excerpt")
+                    metin = metin_div.get_text(strip=True) if metin_div else ""
+                    
+                    # 5. Airtable Kayıt
+                    table.create({
+                        "haber_basligi": baslik,
+                        "gorsel": [{"url": final_img}] if final_img else [],
+                        "haber_metni": metin,
+                        "portal": "Formen Dergisi",
+                        "url": link
+                    })
+                    print(f"✅ Formen: {baslik[:40]}...")
+                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                
+                # Eski yıla geçiş kontrolü
+                elif any(old in dt_str for old in ["2025", "2024"]):
+                    print(f"   ℹ️ Formen: {CURRENT_YEAR} öncesi haberlere ulaşıldı.")
+                    return # Fonksiyondan çık
+
+            if not found_year_in_page: break
+            page += 1
+        except Exception as e:
+            print(f"⚠️ Formen Hatası: {e}")
+            break
+
 if __name__ == "__main__":
     urls, titles = get_existing_data()
     
