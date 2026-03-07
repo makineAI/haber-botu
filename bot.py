@@ -96,19 +96,21 @@ def scrape_lht(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- MAKİNA MARKET ANA MOTORU (HTML Yapısına Tam Uyumlu) ---
-def scrape_mm_category(ex_urls, ex_titles, cat_slug, portal_name, step_info):
-    print(f"\n🔍 [{step_info}] {portal_name} ({CURRENT_YEAR}) Taraması...")
+# --- SİTE 3: MAKİNA MARKET ---
+def scrape_makina_market_ana(ex_urls, ex_titles):
+    print(f"\n🔍 Makina Market ({CURRENT_YEAR}) Taraması Başladı...")
     page = 1
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     }
-    
+
     while True:
-        url = f"https://makina-market.com.tr/category/{cat_slug}/page/{page}/"
+        # Tüm alt kategorilerin de düştüğü ana haberler sayfası
+        url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=headers)
-            if r.status_code != 200: break
+            if r.status_code != 200: 
+                break
                 
             soup = BeautifulSoup(r.content, "html.parser")
             articles = soup.find_all("article")
@@ -116,29 +118,28 @@ def scrape_mm_category(ex_urls, ex_titles, cat_slug, portal_name, step_info):
             
             found_year_in_page = False
             for art in articles:
-                # 1. Tarih Kontrolü (Örn: 4 Mart 2026)
+                # 1. Tarih Tespiti
                 date_div = art.find("div", class_="cs-meta-date")
                 tarih = date_div.get_text(strip=True) if date_div else ""
                 
+                # Sadece mevcut yılın haberlerini al (Örn: 2026)
                 if CURRENT_YEAR in tarih:
                     found_year_in_page = True
                     
-                    # 2. Başlık ve Link (OKADA haberi gibi h2 içindeki a)
+                    # 2. Başlık ve Link
                     title_tag = art.find("h2", class_="cs-entry__title")
                     if not title_tag: continue
-                    
                     baslik = title_tag.get_text(strip=True)
-                    link_tag = title_tag.find("a")
-                    link = link_tag["href"] if link_tag else ""
+                    link = title_tag.find("a")["href"]
                     
-                    if not link or link.lower() in ex_urls or baslik.lower() in ex_titles:
+                    # Mükerrer Kontrolü
+                    if link.lower() in ex_urls or baslik.lower() in ex_titles:
                         continue
                     
                     # 3. Görsel Çekme (data-src ve src kontrolü ile)
                     img_tag = art.find("img")
                     img_src = ""
                     if img_tag:
-                        # Bazı haberlerde src, bazılarında data-src dolu olur
                         img_src = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-lazy-src")
                     
                     final_img = clean_img(img_src, "https://makina-market.com.tr")
@@ -147,31 +148,32 @@ def scrape_mm_category(ex_urls, ex_titles, cat_slug, portal_name, step_info):
                     excerpt_div = art.find("div", class_="cs-entry__excerpt")
                     metin = excerpt_div.get_text(strip=True) if excerpt_div else ""
                     
-                    # 5. Airtable Kayıt
+                    # 5. Airtable Kayıt (Adı Sadece Makina Market)
                     table.create({
                         "haber_basligi": baslik,
                         "gorsel": [{"url": final_img}] if final_img else [],
                         "haber_metni": metin,
-                        "portal": portal_name,
+                        "portal": "Makina Market", # Tek bir isim
                         "url": link
                     })
                     print(f"✅ Eklendi: {baslik[:40]}...")
                     
                     ex_urls.add(link.lower())
                     ex_titles.add(baslik.lower())
-            
+                
+                # Eğer tarih 2025 veya 2024'e düştüyse daha fazla sayfa tarama
+                elif any(old_year in tarih for old_year in ["2025", "2024", "2023"]):
+                    # Bu sayfanın geri kalanı ve sonraki sayfalar eskidir
+                    print(f"   ℹ️ Eski yıla ulaşıldı: {tarih}")
+                    return # Fonksiyondan tamamen çık
+
+            # Eğer sayfada hiç 2026 haberi yoksa dur
             if not found_year_in_page:
-                print(f"   ℹ️ {portal_name} için {CURRENT_YEAR} yılı bitti.")
                 break
                 
             page += 1
         except Exception as e:
-            print(f"   ⚠️ Hata: {e}")
-            break
-                
-            page += 1
-        except Exception as e:
-            print(f"   ⚠️ Hata oluştu: {e}")
+            print(f"⚠️ Makina Market Hatası: {e}")
             break
 
 if __name__ == "__main__":
