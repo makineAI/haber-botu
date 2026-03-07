@@ -36,7 +36,7 @@ def safe_create(fields):
     try:
         table.create(fields)
         print(f"   🚀 Kaydedildi: {fields['haber_basligi'][:50]}...")
-        time.sleep(0.4) 
+        time.sleep(0.3) 
     except Exception as e:
         print(f"   ❌ HATA: {e}")
 
@@ -94,7 +94,7 @@ def scrape_lht(ex_urls, ex_titles):
         except: continue
 
 # ==========================================
-# 3. MAKİNA MARKET
+# 3. MAKİNA MARKET (Haber Metni Düzenlendi)
 # ==========================================
 def scrape_makina_market(ex_urls, ex_titles):
     print(f"\n--- [3/10] Makina Market ---")
@@ -112,15 +112,19 @@ def scrape_makina_market(ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
+                # Metni çekmek için:
+                metin_tag = art.find("div", class_="cs-entry__excerpt") or art.find("p")
+                metin = metin_tag.get_text(strip=True) if metin_tag else ""
+
                 img_tag = art.find("img")
                 img_src = img_tag.get("data-src") or img_tag.get("src") if img_tag else ""
                 
-                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": "Makina Market", "url": link})
+                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": "Makina Market", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: continue
 
 # ==========================================
-# 4, 5, 6. FORMEN 
+# 4, 5, 6. FORMEN (Resimler ve Metin Düzenlendi)
 # ==========================================
 def process_formen(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
@@ -130,7 +134,7 @@ def process_formen(base_url, portal_name, ex_urls, ex_titles):
         try:
             r = requests.get(url, timeout=20, headers=headers)
             soup = BeautifulSoup(r.content, "html.parser")
-            items = soup.select(".tdb_module_loop, .td_module_wrap, .td_module_10, .td_module_mx1")
+            items = soup.select(".tdb_module_loop, .td_module_wrap, .td-block-span12, .td_module_10")
             for item in items:
                 title_tag = item.find("h3") or item.find("h2")
                 if not title_tag or not title_tag.find("a"): continue
@@ -138,15 +142,23 @@ def process_formen(base_url, portal_name, ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
+                # Görsel için daha agresif tarama
                 img_tag = item.find("img")
-                img_src = img_tag.get("data-img-url") or img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
+                img_src = ""
+                if img_tag:
+                    # Formen'in kullandığı tüm varyasyonları dene:
+                    img_src = img_tag.get("data-img-url") or img_tag.get("data-src") or img_tag.get("src") or img_tag.get("srcset")
+                    if img_src and " " in img_src: img_src = img_src.split(" ")[0] # srcset varsa ilkini al
+
+                metin_tag = item.find("div", class_="td-excerpt") or item.find("div", class_="tdb-excerpt")
+                metin = metin_tag.get_text(strip=True) if metin_tag else ""
                 
-                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": portal_name, "url": link})
+                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: continue
 
 # ==========================================
-# 7, 8. İSTİF MH (GÜÇLENDİRİLMİŞ TARİH KONTROLÜ)
+# 7, 8. İSTİF MH (Sıkı Tarih Denetimi)
 # ==========================================
 def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
@@ -167,31 +179,34 @@ def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 img_tag = item.find("img")
                 img_src = img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
                 
-                # KRİTİK DÜZELTME: Metinde bulamazsan görsel yolunda (wp-content/uploads/2026/..) ara
+                # Sadece 2026 olanları almak için kesin kontrol
+                # Görsel yolunda veya meta kısmında 2026 yoksa içeri girmeye zorla
                 is_valid = False
-                if CURRENT_YEAR in str(item) or (img_src and CURRENT_YEAR in img_src):
+                if (img_src and "/2026/" in img_src) or (CURRENT_YEAR in item.get_text()):
                     is_valid = True
                 
-                if not is_valid: # Hala emin değilsek içeri gir
+                # Şüpheli durum: İçeri girip tam tarihe bak
+                if not is_valid:
                     try:
-                        ir = requests.get(link, timeout=10, headers=headers)
-                        if CURRENT_YEAR in ir.text: is_valid = True
+                        inner_r = requests.get(link, timeout=10, headers=headers)
+                        if f"/{CURRENT_YEAR}/" in inner_r.text or f".{CURRENT_YEAR}" in inner_r.text:
+                            is_valid = True
                     except: pass
 
                 if is_valid:
                     safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 else:
-                    print(f"   ⏭️ Eski Tarih Atlandı: {baslik[:30]}")
+                    print(f"   ⏭️ Eski Haber (2025/Öncesi) Atlandı: {baslik[:30]}")
         except: continue
 
 # ==========================================
-# 9. MADEN OCAK
+# 9. MADEN OCAK 
 # ==========================================
 def scrape_maden_ocak(ex_urls, ex_titles):
     print(f"\n--- [9/10] Maden Ocak ---")
     headers = {'User-Agent': 'Mozilla/5.0'}
-    for page in range(1, 6):
+    for page in range(1, 5):
         url = f"https://www.madenveocak.com.tr/kategori/haber/page/{page}/"
         try:
             r = requests.get(url, timeout=15, headers=headers)
@@ -248,4 +263,4 @@ if __name__ == "__main__":
     scrape_maden_ocak(urls, titles)
     scrape_santiye(urls, titles)
     
-    print(f"\n🏁 İŞLEM TAMAMLANDI.")
+    print(f"\n🏁 İŞLEM TAMAMLANDI. TOPLAM KAYIT: {len(urls)}")
