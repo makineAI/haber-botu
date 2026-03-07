@@ -255,25 +255,19 @@ def scrape_formen(ex_urls, ex_titles):
             break
 
 if __name__ == "__main__":
+    # 1. Önce mevcut verileri Airtable'dan çek
     urls, titles = get_existing_data()
     
-    # 1. Forum Makina
+    # 2. Forum Makina Taraması
     scrape_forum_makina(urls, titles)
     
-    # 2. LHT
+    # 3. LHT Taraması
     scrape_lht(urls, titles)
     
-    # 3-8. Makina Market Kategorileri (Her biri bağımsız çalışır)
-    mm_cats = [
-        ("haberler", "Makina Market - Haber", "3/8"),
-        ("saha-roportaji", "Makina Market - Saha Röportajı", "4/8"),
-        ("roportaj", "Makina Market - Röportaj", "5/8"),
-        ("proje-haberi", "Makina Market - Proje Haberi", "6/8"),
-        ("urun-tanitimi", "Makina Market - Ürün Tanıtımı", "7/8"),
-        ("yeni-urun", "Makina Market - Yeni Ürün", "8/8")
-    ]
+    # 4. Makina Market Taraması (Artık tek fonksiyon, tek isim!)
+    scrape_makina_market_ana(urls, titles)
     
-    for slug, name, step in mm_cats:
-        scrape_mm_category(urls, titles, slug, name, step)
-
-    print(f"\n🏁 İşlem Tamamlandı. {CURRENT_YEAR} yılına ait tüm portallar güncellendi!")
+    # 5. Formen Dergisi Taraması
+    scrape_formen(urls, titles)
+    
+    print(f"\n🏁 İşlem Tamamlandı. {CURRENT_YEAR} yılına ait 4 portal güncellendi!")
