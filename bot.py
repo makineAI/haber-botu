@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+import re
 from bs4 import BeautifulSoup
 from pyairtable import Api
 from dotenv import load_dotenv
@@ -43,9 +44,36 @@ def safe_create(fields):
 def clean_img(url, base_url):
     if not url or "data:image" in url: return ""
     try:
-        full_url = urljoin(base_url, url).replace("http://", "https://")
+        # URL içindeki tırnakları ve gereksiz boşlukları temizle
+        actual_url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip()
+        full_url = urljoin(base_url, actual_url).replace("http://", "https://")
         return full_url
     except: return ""
+
+# ==========================================
+# FORMEN ÖZEL GÖRSEL AYIKLAYICI (REGEX)
+# ==========================================
+def extract_formen_img(item):
+    """Formen'in karmaşık span/style yapısından görseli çeker"""
+    # 1. Yol: data-img-url özniteliği (En kolayı)
+    span_tag = item.find("span", {"data-img-url": True})
+    if span_tag:
+        return span_tag.get("data-img-url")
+    
+    # 2. Yol: Style içindeki background-image (Regex ile)
+    span_style = item.find("span", class_="entry-thumb")
+    if span_style and span_style.get("style"):
+        style_str = span_style.get("style")
+        match = re.search(r'url\((.*?)\)', style_str)
+        if match:
+            return match.group(1)
+            
+    # 3. Yol: Klasik img etiketi (Yedek)
+    img_tag = item.find("img")
+    if img_tag:
+        return img_tag.get("data-src") or img_tag.get("src")
+        
+    return ""
 
 # ==========================================
 # 1. FORUM MAKİNA
@@ -94,7 +122,7 @@ def scrape_lht(ex_urls, ex_titles):
         except: continue
 
 # ==========================================
-# 3. MAKİNA MARKET (Haber Metni Düzenlendi)
+# 3. MAKİNA MARKET
 # ==========================================
 def scrape_makina_market(ex_urls, ex_titles):
     print(f"\n--- [3/10] Makina Market ---")
@@ -112,10 +140,8 @@ def scrape_makina_market(ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # Metni çekmek için:
                 metin_tag = art.find("div", class_="cs-entry__excerpt") or art.find("p")
                 metin = metin_tag.get_text(strip=True) if metin_tag else ""
-
                 img_tag = art.find("img")
                 img_src = img_tag.get("data-src") or img_tag.get("src") if img_tag else ""
                 
@@ -124,17 +150,17 @@ def scrape_makina_market(ex_urls, ex_titles):
         except: continue
 
 # ==========================================
-# 4, 5, 6. FORMEN (Resimler ve Metin Düzenlendi)
+# 4, 5, 6. FORMEN (KOD GÜNCELLENDİ)
 # ==========================================
 def process_formen(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
     for page in range(1, 4):
         url = f"{base_url}page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=headers)
             soup = BeautifulSoup(r.content, "html.parser")
-            items = soup.select(".tdb_module_loop, .td_module_wrap, .td-block-span12, .td_module_10")
+            items = soup.select(".tdb_module_loop, .td_module_wrap, .td_module_10, .td_module_mx1")
             for item in items:
                 title_tag = item.find("h3") or item.find("h2")
                 if not title_tag or not title_tag.find("a"): continue
@@ -142,23 +168,24 @@ def process_formen(base_url, portal_name, ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # Görsel için daha agresif tarama
-                img_tag = item.find("img")
-                img_src = ""
-                if img_tag:
-                    # Formen'in kullandığı tüm varyasyonları dene:
-                    img_src = img_tag.get("data-img-url") or img_tag.get("data-src") or img_tag.get("src") or img_tag.get("srcset")
-                    if img_src and " " in img_src: img_src = img_src.split(" ")[0] # srcset varsa ilkini al
-
+                # GÖRSEL ÇEKME (Yeni Metot)
+                img_src = extract_formen_img(item)
+                
                 metin_tag = item.find("div", class_="td-excerpt") or item.find("div", class_="tdb-excerpt")
                 metin = metin_tag.get_text(strip=True) if metin_tag else ""
                 
-                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": portal_name, "url": link})
+                safe_create({
+                    "haber_basligi": baslik, 
+                    "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], 
+                    "haber_metni": metin, 
+                    "portal": portal_name, 
+                    "url": link
+                })
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
         except: continue
 
 # ==========================================
-# 7, 8. İSTİF MH (Sıkı Tarih Denetimi)
+# 7, 8. İSTİF MH
 # ==========================================
 def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
@@ -179,29 +206,25 @@ def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 img_tag = item.find("img")
                 img_src = img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
                 
-                # Sadece 2026 olanları almak için kesin kontrol
-                # Görsel yolunda veya meta kısmında 2026 yoksa içeri girmeye zorla
                 is_valid = False
-                if (img_src and "/2026/" in img_src) or (CURRENT_YEAR in item.get_text()):
+                if (img_src and f"/{CURRENT_YEAR}/" in img_src) or (CURRENT_YEAR in item.get_text()):
                     is_valid = True
                 
-                # Şüpheli durum: İçeri girip tam tarihe bak
                 if not is_valid:
                     try:
                         inner_r = requests.get(link, timeout=10, headers=headers)
-                        if f"/{CURRENT_YEAR}/" in inner_r.text or f".{CURRENT_YEAR}" in inner_r.text:
-                            is_valid = True
+                        if f"/{CURRENT_YEAR}/" in inner_r.text: is_valid = True
                     except: pass
 
                 if is_valid:
                     safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 else:
-                    print(f"   ⏭️ Eski Haber (2025/Öncesi) Atlandı: {baslik[:30]}")
+                    print(f"   ⏭️ Eski Haber Atlandı: {baslik[:30]}")
         except: continue
 
 # ==========================================
-# 9. MADEN OCAK 
+# 9. MADEN OCAK
 # ==========================================
 def scrape_maden_ocak(ex_urls, ex_titles):
     print(f"\n--- [9/10] Maden Ocak ---")
@@ -263,4 +286,4 @@ if __name__ == "__main__":
     scrape_maden_ocak(urls, titles)
     scrape_santiye(urls, titles)
     
-    print(f"\n🏁 İŞLEM TAMAMLANDI. TOPLAM KAYIT: {len(urls)}")
+    print(f"\n🏁 İŞLEM TAMAMLANDI. TOPLAM VERİ: {len(urls)}")
