@@ -44,23 +44,17 @@ def safe_create(fields):
 def clean_img(url, base_url):
     if not url or "data:image" in url: return ""
     try:
-        # URL içindeki tırnakları ve gereksiz boşlukları temizle
         actual_url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip()
         full_url = urljoin(base_url, actual_url).replace("http://", "https://")
         return full_url
     except: return ""
 
-# ==========================================
-# FORMEN ÖZEL GÖRSEL AYIKLAYICI (REGEX)
-# ==========================================
 def extract_formen_img(item):
-    """Formen'in karmaşık span/style yapısından görseli çeker"""
-    # 1. Yol: data-img-url özniteliği (En kolayı)
+    """Formen'in span/style yapısından görseli çeker"""
     span_tag = item.find("span", {"data-img-url": True})
     if span_tag:
         return span_tag.get("data-img-url")
     
-    # 2. Yol: Style içindeki background-image (Regex ile)
     span_style = item.find("span", class_="entry-thumb")
     if span_style and span_style.get("style"):
         style_str = span_style.get("style")
@@ -68,7 +62,6 @@ def extract_formen_img(item):
         if match:
             return match.group(1)
             
-    # 3. Yol: Klasik img etiketi (Yedek)
     img_tag = item.find("img")
     if img_tag:
         return img_tag.get("data-src") or img_tag.get("src")
@@ -150,7 +143,7 @@ def scrape_makina_market(ex_urls, ex_titles):
         except: continue
 
 # ==========================================
-# 4, 5, 6. FORMEN (KOD GÜNCELLENDİ)
+# 4, 5, 6. FORMEN
 # ==========================================
 def process_formen(base_url, portal_name, ex_urls, ex_titles):
     print(f"\n--- Tarama: {portal_name} ---")
@@ -168,9 +161,7 @@ def process_formen(base_url, portal_name, ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # GÖRSEL ÇEKME (Yeni Metot)
                 img_src = extract_formen_img(item)
-                
                 metin_tag = item.find("div", class_="td-excerpt") or item.find("div", class_="tdb-excerpt")
                 metin = metin_tag.get_text(strip=True) if metin_tag else ""
                 
@@ -278,9 +269,12 @@ if __name__ == "__main__":
     scrape_forum_makina(urls, titles)
     scrape_lht(urls, titles)
     scrape_makina_market(urls, titles)
-    process_formen("https://formendergisi.com/haber/", "Formen Dergisi", urls, titles)
+    
+    # İSİMLENDİRME GÜNCELLEMESİ YAPILDI
+    process_formen("https://formendergisi.com/haber/", "Formen - Haber", urls, titles)
     process_formen("https://formendergisi.com/roportaj/", "Formen - Röportaj", urls, titles)
     process_formen("https://formendergisi.com/dunyadan/", "Formen - Dünya", urls, titles)
+    
     process_istif_mh("https://istifmaterialhandling.com/category/haber/", "İstif MH - Haber", urls, titles)
     process_istif_mh("https://istifmaterialhandling.com/category/manset/", "İstif MH - Manşet", urls, titles)
     scrape_maden_ocak(urls, titles)
