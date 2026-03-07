@@ -37,9 +37,11 @@ def clean_img(url, base_url):
     file_part = quote(parts[-1])
     return "/".join(parts[:-1]) + "/" + file_part
 
-# --- 1. FORUM MAKİNA ---
+# ==========================================
+# 1. FORUM MAKİNA
+# ==========================================
 def scrape_forum_makina(ex_urls, ex_titles):
-    print(f"\n🔍 [1/5] Forum Makina ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [1/10] Forum Makina ({CURRENT_YEAR}) Taraması...")
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     while True:
@@ -66,9 +68,11 @@ def scrape_forum_makina(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- 2. LHT ---
+# ==========================================
+# 2. LHT
+# ==========================================
 def scrape_lht(ex_urls, ex_titles):
-    print(f"\n🔍 [2/5] LHT ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [2/10] LHT ({CURRENT_YEAR}) Taraması...")
     page = 1
     while True:
         url = f"https://www.lht.com.tr/kategori/haber/page/{page}/"
@@ -96,9 +100,11 @@ def scrape_lht(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- 3. MAKİNA MARKET ---
+# ==========================================
+# 3. MAKİNA MARKET
+# ==========================================
 def scrape_makina_market_ana(ex_urls, ex_titles):
-    print(f"\n🔍 [3/5] Makina Market ({CURRENT_YEAR}) Taraması...")
+    print(f"\n🔍 [3/10] Makina Market ({CURRENT_YEAR}) Taraması...")
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     while True:
@@ -121,7 +127,6 @@ def scrape_makina_market_ana(ex_urls, ex_titles):
                     img_tag = art.find("img")
                     img_src = img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
                     metin = art.find("div", class_="cs-entry__excerpt").get_text(strip=True) if art.find("div", class_="cs-entry__excerpt") else ""
-                    # PORTAL ADI GÜNCELLENDİ
                     table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": "Makina Market", "url": link})
                     print(f"✅ Makina Market: {baslik[:30]}")
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
@@ -130,13 +135,14 @@ def scrape_makina_market_ana(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- 4. FORMEN DERGİSİ ---
-def scrape_formen(ex_urls, ex_titles):
-    print(f"\n🔍 [4/5] Formen Dergisi ({CURRENT_YEAR}) Taraması...")
+# ==========================================
+# 4, 5, 6. FORMEN (ORTAK FONKSİYON)
+# ==========================================
+def process_formen_category(base_url, portal_name, ex_urls, ex_titles):
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
     while True:
-        url = f"https://formendergisi.com/haber/page/{page}/"
+        url = f"{base_url}page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=headers)
             if r.status_code != 200: break
@@ -150,27 +156,30 @@ def scrape_formen(ex_urls, ex_titles):
                 if CURRENT_YEAR in dt:
                     found = True
                     title_tag = mod.find("h3", class_="entry-title")
+                    if not title_tag: continue
                     link = title_tag.find("a")["href"]
                     baslik = title_tag.find("a").get_text(strip=True)
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     img_span = mod.find("span", class_="entry-thumb")
                     img_src = img_span.get("data-img-url") if img_span else ""
-                    table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": "", "portal": "Formen Dergisi", "url": link})
-                    print(f"✅ Formen: {baslik[:30]}")
+                    
+                    # Ön metin istenmediği için boş ("") bırakıyoruz
+                    table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": "", "portal": portal_name, "url": link})
+                    print(f"✅ {portal_name}: {baslik[:30]}")
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 elif any(old in dt for old in ["2025", "2024"]): return
             if not found: break
             page += 1
         except: break
 
-# --- 5. İSTİF MH - TEMİZLENMİŞ VERSİYON ---
-def scrape_istif_mh(ex_urls, ex_titles):
-    print(f"\n🔍 [5/5] İstif MH - Haber Taraması Başladı...")
+# ==========================================
+# 7, 8. İSTİF MH (ORTAK FONKSİYON)
+# ==========================================
+def process_istif_category(base_url, portal_name, ex_urls, ex_titles):
     page = 1
     headers = {'User-Agent': 'Mozilla/5.0'}
-    
     while True:
-        url = f"https://istifmaterialhandling.com/category/haber/page/{page}/"
+        url = f"{base_url}page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=headers)
             if r.status_code != 200: break
@@ -178,6 +187,7 @@ def scrape_istif_mh(ex_urls, ex_titles):
             items = soup.find_all("div", class_="kanews-post-item")
             if not items: break
             
+            new_added_on_page = 0
             for item in items:
                 title_tag = item.find("h3", class_="kanews-post-headline")
                 if not title_tag: continue
@@ -186,45 +196,156 @@ def scrape_istif_mh(ex_urls, ex_titles):
                 
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # DERİN TARAMA: Tarih kontrolü için içeri gir
+                # Derin Tarama: 2026 Filtresi
                 try:
-                    r_detail = requests.get(link, timeout=10, headers=headers)
-                    soup_detail = BeautifulSoup(r_detail.content, "html.parser")
-                    # Sitenin detay sayfasında gerçek tarih genelde 'time' veya meta taglarındadır
-                    detail_date = soup_detail.get_text() # En garanti yol tüm metinde yıl aramak
-                    
-                    # Eğer metinde 2025 veya 2024 geçiyorsa ve 2026 geçmiyorsa eski haberdir
-                    if any(old in detail_date for old in ["2025", "2024"]) and CURRENT_YEAR not in detail_date:
-                        print(f"   ℹ️ Eski haber atlandı (2025/2024): {baslik[:30]}")
+                    r_det = requests.get(link, timeout=10, headers=headers)
+                    det_text = BeautifulSoup(r_det.content, "html.parser").get_text()
+                    if any(old in det_text for old in ["2025", "2024"]) and CURRENT_YEAR not in det_text:
                         continue
                 except: pass
 
                 img_tag = item.find("img")
                 img_src = clean_img(img_tag.get("src") or img_tag.get("data-src"), url) if img_tag else ""
                 
-                # Haber metni boş ("") olarak gönderiliyor
                 table.create({
                     "haber_basligi": baslik,
                     "gorsel": [{"url": img_src}] if img_src else [],
                     "haber_metni": "", 
-                    "portal": "İstif MH - Haber",
+                    "portal": portal_name,
                     "url": link
                 })
-                print(f"✅ İstif MH Eklendi: {baslik[:30]}")
+                print(f"✅ {portal_name}: {baslik[:30]}")
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                new_added_on_page += 1
 
+            if page >= 5: break 
             page += 1
-            if page > 5: break # Çok geriye gitmeyi engellemek için güvenlik sınırı
         except: break
 
+# ==========================================
+# 9. MADEN OCAK DERGİSİ
+# ==========================================
+def scrape_maden_ocak(ex_urls, ex_titles):
+    print(f"\n🔍 [9/10] Maden Ocak Dergisi ({CURRENT_YEAR}) Taraması...")
+    page = 1
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    while True:
+        url = f"https://www.madenveocak.com.tr/kategori/haber/page/{page}/"
+        try:
+            r = requests.get(url, timeout=20, headers=headers)
+            if r.status_code != 200: break
+            soup = BeautifulSoup(r.content, "html.parser")
+            articles = soup.find_all("article")
+            if not articles: break
+            found = False
+            for art in articles:
+                time_tag = art.find("time")
+                dt = time_tag.get("datetime", "") if time_tag else ""
+                if CURRENT_YEAR in dt:
+                    found = True
+                    title_tag = art.find("h2", class_="entry-title")
+                    if not title_tag: continue
+                    link = title_tag.find("a")["href"]
+                    baslik = title_tag.find("a").get_text(strip=True)
+                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                    
+                    img_tag = art.find("img")
+                    img_src = img_tag.get("src", "") if img_tag else ""
+                    p_tag = art.find("p", class_="post-excerpt")
+                    metin = p_tag.get_text(strip=True) if p_tag else ""
+                    
+                    table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": "Maden Ocak Dergisi", "url": link})
+                    print(f"✅ Maden Ocak: {baslik[:30]}")
+                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                elif any(old in dt for old in ["2025", "2024"]): return
+            if not found: break
+            page += 1
+        except: break
+
+# ==========================================
+# 10. ŞANTİYE
+# ==========================================
+def scrape_santiye(ex_urls, ex_titles):
+    print(f"\n🔍 [10/10] Şantiye ({CURRENT_YEAR}) Taraması...")
+    page = 1
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    while True:
+        # Sayfalama yapısı: ?page=1, ?page=2
+        url = f"https://www.santiye.com.tr/haberler.html?page={page}" if page > 1 else "https://www.santiye.com.tr/haberler.html"
+        try:
+            r = requests.get(url, timeout=20, headers=headers)
+            if r.status_code != 200: break
+            soup = BeautifulSoup(r.content, "html.parser")
+            contents = soup.find_all("div", class_="post-content")
+            if not contents: break
+            found = False
+            for content in contents:
+                date_tag = content.find("li") # <i class="fa fa-clock-o"></i>06.03.2026 barındırıyor
+                dt = date_tag.get_text(strip=True) if date_tag else ""
+                
+                if CURRENT_YEAR in dt:
+                    found = True
+                    title_tag = content.find("h2")
+                    if not title_tag: continue
+                    a_tag = title_tag.find("a")
+                    baslik = a_tag.get_text(strip=True)
+                    raw_link = a_tag["href"]
+                    link = urljoin("https://www.santiye.com.tr", raw_link)
+                    
+                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                    
+                    # Görseli bir üst div'den (row) yakalıyoruz
+                    row = content.find_parent("div", class_="row")
+                    img_src = ""
+                    if row and row.find("img"):
+                        img_src = row.find("img").get("src", "")
+                        
+                    p_tag = content.find("p")
+                    metin = p_tag.get_text(strip=True).replace("[..]", "") if p_tag else ""
+                    
+                    table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, "https://www.santiye.com.tr")}] if img_src else [], "haber_metni": metin, "portal": "Şantiye", "url": link})
+                    print(f"✅ Şantiye: {baslik[:30]}")
+                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                elif any(old in dt for old in ["2025", "2024"]): return
+            if not found: break
+            page += 1
+        except: break
+
+
+# ==========================================
+# ANA ÇALIŞTIRICI (MOTOR)
+# ==========================================
 if __name__ == "__main__":
     urls, titles = get_existing_data()
-    print(f"📊 Airtable'da şu an toplam {len(urls)} adet kayıtlı link var.")
+    print(f"📊 Tarama Başlıyor... (Airtable'daki Mevcut Kayıt: {len(urls)})")
     
+    # 1. Forum Makina
     scrape_forum_makina(urls, titles)
+    
+    # 2. LHT
     scrape_lht(urls, titles)
+    
+    # 3. Makina Market
     scrape_makina_market_ana(urls, titles)
-    scrape_formen(urls, titles)
-    scrape_istif_mh(urls, titles) 
+    
+    # 4, 5, 6. Formen Kategorileri
+    print(f"\n🔍 [4/10] Formen Dergisi ({CURRENT_YEAR}) Taraması...")
+    process_formen_category("https://formendergisi.com/haber/", "Formen Dergisi", urls, titles)
+    print(f"\n🔍 [5/10] Formen - Röportaj ({CURRENT_YEAR}) Taraması...")
+    process_formen_category("https://formendergisi.com/roportaj/", "Formen - Röportaj", urls, titles)
+    print(f"\n🔍 [6/10] Formen - Dünya ({CURRENT_YEAR}) Taraması...")
+    process_formen_category("https://formendergisi.com/dunyadan/", "Formen - Dünya", urls, titles)
+    
+    # 7, 8. İstif MH Kategorileri
+    print(f"\n🔍 [7/10] İstif MH - Haber Taraması Başladı...")
+    process_istif_category("https://istifmaterialhandling.com/category/haber/", "İstif MH - Haber", urls, titles)
+    print(f"\n🔍 [8/10] İstif MH - Manşet Taraması Başladı...")
+    process_istif_category("https://istifmaterialhandling.com/category/manset/", "İstif MH - Manşet", urls, titles)
+    
+    # 9. Maden Ocak
+    scrape_maden_ocak(urls, titles)
+    
+    # 10. Şantiye
+    scrape_santiye(urls, titles)
 
-    print(f"\n🏁 İşlem Tamamlandı!")
+    print(f"\n🏁 DEV İŞLEM TAMAMLANDI! Tüm 10 Kol Başarıyla Taranarak Airtable'a Aktarıldı.")
