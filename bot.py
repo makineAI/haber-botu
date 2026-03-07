@@ -233,8 +233,17 @@ def scrape_istif_mh(ex_urls, ex_titles):
 
 if __name__ == "__main__":
     urls, titles = get_existing_data()
+    print(f"📊 Airtable'da şu an toplam {len(urls)} adet kayıtlı link var.")
+    
+    # 1. Forum Makina
     scrape_forum_makina(urls, titles)
+    # 2. LHT
     scrape_lht(urls, titles)
+    # 3. Makina Market
     scrape_makina_market_ana(urls, titles)
+    # 4. Formen Dergisi
     scrape_formen(urls, titles)
-    print(f"\n🏁 İşlem Tamamlandı. {CURRENT_YEAR} yılı güncel!")
+    # 5. İstif MH (Eğer kodunu eklediysen bunu da buraya yaz)
+    # scrape_istif_mh(urls, titles) 
+
+    print(f"\n🏁 Tarama bitti. Eğer yukarıda ✅ görmediysen, tüm haberler zaten Airtable'da kayıtlı demektir.")
