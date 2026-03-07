@@ -96,38 +96,87 @@ def scrape_lht(ex_urls, ex_titles):
             page += 1
         except: break
 
-# --- MAKİNA MARKET ANA MOTORU (Kategori Bazlı Dinamik Yapı) ---
+# --- MAKİNA MARKET ANA MOTORU (HTML Yapısına Tam Uyumlu) ---
 def scrape_mm_category(ex_urls, ex_titles, cat_slug, portal_name, step_info):
     print(f"\n🔍 [{step_info}] {portal_name} ({CURRENT_YEAR}) Taraması...")
     page = 1
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    # User-Agent'ı daha güncel bir tarayıcı gibi yapalım
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    }
+    
     while True:
         url = f"https://makina-market.com.tr/category/{cat_slug}/page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=headers)
-            if r.status_code != 200: break
+            if r.status_code != 200: 
+                break
+                
             soup = BeautifulSoup(r.content, "html.parser")
+            # Makina Market makalelerini bul
             articles = soup.find_all("article")
             if not articles: break
-            found_year = False
+            
+            found_year_in_page = False
             for art in articles:
+                # 1. Tarih Tespiti
                 date_div = art.find("div", class_="cs-meta-date")
                 tarih = date_div.get_text(strip=True) if date_div else ""
+                
+                # Eğer tarih bu yıla aitse işle
                 if CURRENT_YEAR in tarih:
-                    found_year = True
+                    found_year_in_page = True
+                    
+                    # 2. Başlık ve Link
                     title_tag = art.find("h2", class_="cs-entry__title")
                     if not title_tag: continue
                     baslik = title_tag.get_text(strip=True)
                     link = title_tag.find("a")["href"]
-                    if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
-                    img_src = art.find("img")["src"] if art.find("img") else ""
-                    metin = art.find("div", class_="cs-entry__excerpt").get_text(strip=True) if art.find("div", class_="cs-entry__excerpt") else ""
-                    table.create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": metin, "portal": portal_name, "url": link})
-                    print(f"✅ {portal_name}: {baslik[:30]}")
-                    ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-            if not found_year: break
+                    
+                    # Mükerrer Kontrolü
+                    if link.lower() in ex_urls or baslik.lower() in ex_titles:
+                        continue
+                    
+                    # 3. Görsel Çekme (Paylaştığın HTML'deki cs-overlay-background yapısına göre)
+                    img_src = ""
+                    # Önce overlay içindeki resmi dene
+                    overlay_img = art.find("div", class_="cs-overlay-background")
+                    if overlay_img and overlay_img.find("img"):
+                        img_src = overlay_img.find("img").get("src") or overlay_img.find("img").get("data-src")
+                    
+                    # Eğer bulamazsa herhangi bir img ara
+                    if not img_src and art.find("img"):
+                        img_src = art.find("img").get("src")
+                    
+                    final_img = clean_img(img_src, "https://makina-market.com.tr")
+                    
+                    # 4. Haber Metni (Excerpt)
+                    metin_div = art.find("div", class_="cs-entry__excerpt")
+                    metin = metin_div.get_text(strip=True) if metin_div else ""
+                    
+                    # 5. Airtable'a Gönder
+                    table.create({
+                        "haber_basligi": baslik,
+                        "gorsel": [{"url": final_img}] if final_img else [],
+                        "haber_metni": metin,
+                        "portal": portal_name,
+                        "url": link
+                    })
+                    print(f"✅ Eklendi: {baslik[:40]}...")
+                    
+                    # Listeyi güncelle
+                    ex_urls.add(link.lower())
+                    ex_titles.add(baslik.lower())
+            
+            # Eğer bu sayfada hiç 2026 haberi yoksa, artık eski sayfalara geçmişizdir
+            if not found_year_in_page:
+                print(f"   ℹ️ {CURRENT_YEAR} yılı içerikleri bitti.")
+                break
+                
             page += 1
-        except: break
+        except Exception as e:
+            print(f"   ⚠️ Hata oluştu: {e}")
+            break
 
 if __name__ == "__main__":
     urls, titles = get_existing_data()
