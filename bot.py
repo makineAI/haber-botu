@@ -8,23 +8,20 @@ from urllib.parse import urljoin, quote
 from datetime import datetime
 import google.generativeai as genai
 
-# .env dosyasındaki gizli şifreleri sisteme yükler
 load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
 
 # ==========================================
-# AYARLAR (BASEROW & GEMINI) - %100 GÜVENLİ MOD
+# AYARLAR (BASEROW & GEMINI)
 # ==========================================
-# Şifreler ASLA buraya yazılmaz. GitHub Secrets veya .env dosyasından otomatik çekilir.
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 BASEROW_TABLE_ID = "1197624"
 
 if not BASEROW_TOKEN or not GEMINI_API_KEY:
-    print("❌ HATA: Şifreler bulunamadı! Lütfen .env dosyanı veya GitHub Secrets ayarlarını kontrol et.")
+    print("❌ HATA: Şifreler bulunamadı!")
     exit()
 
-# Yapay Zeka Kurulumu
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
@@ -34,6 +31,7 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 def yapay_zeka_ile_ozetle(haber_metni):
     try:
         prompt = f"Sen MAKİNE AI adında endüstriyel bir platformun editörüsün. Aşağıdaki haber metnini oku ve makine sektörü profesyonelleri için en önemli detayları içeren, maksimum 3 cümlelik vurucu bir özet çıkar:\n\n{haber_metni}"
+        # Gemini de takılmasın diye timeout parametreleri arka planda Google tarafından yönetilir
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
@@ -45,23 +43,33 @@ def get_existing_data():
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true&size=200"
     headers = {"Authorization": f"Token {BASEROW_TOKEN}"}
     
-    print("🔄 Baserow'dan eski kayıtlar kontrol ediliyor...")
+    print("🔄 Baserow'dan eski kayıtlar kontrol ediliyor... Lütfen bekleyin.")
+    sayfa_sayisi = 1
     try:
         while url:
-            res = requests.get(url, headers=headers).json()
+            print(f"   👉 Sayfa {sayfa_sayisi} çekiliyor...")
+            # TIMEOUT EKLENDİ (Takılmayı önlemek için)
+            res = requests.get(url, headers=headers, timeout=20).json()
             for r in res.get('results', []):
                 u = r.get('url', '').strip().lower()
                 t = r.get('haber_basligi', '').strip().lower()
                 if u: ex_urls.add(u)
                 if t: ex_titles.add(t)
+            
             url = res.get('next')
+            sayfa_sayisi += 1
+            
+            # Sonsuz döngüden koruma: 50 sayfadan fazlaysa dur
+            if sayfa_sayisi > 50:
+                print("   ⚠️ Çok fazla veri var, kontrol durduruldu.")
+                break
+                
         return ex_urls, ex_titles
     except Exception as e:
-        print(f"❌ Veri çekme hatası: {e}")
+        print(f"❌ Veri çekme hatası (Baserow kilitlendi): {e}")
         return set(), set()
 
 def get_full_text(url):
-    """Haberin detay sayfasına girip tüm metni çeker."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         r = requests.get(url, headers=headers, timeout=15)
@@ -103,14 +111,15 @@ def safe_create(fields):
     }
     
     try:
-        response = requests.post(url, headers=headers, json=fields)
+        # TIMEOUT EKLENDİ (Sonsuz beklemeyi bitiren kritik yer)
+        response = requests.post(url, headers=headers, json=fields, timeout=20)
         if response.status_code == 200:
             print(f"   ✅ Baserow'a Kaydedildi: {fields['haber_basligi'][:50]}...")
         else:
             print(f"   ❌ HATA ({response.status_code}): {response.text}")
         time.sleep(1)
     except Exception as e:
-        print(f"   ❌ HATA: {e}")
+        print(f"   ❌ HATA (Bağlantı koptu): {e}")
 
 def clean_img(url, base_url):
     if not url or "data:image" in url: return ""
