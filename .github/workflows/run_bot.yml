@@ -24,4 +24,8 @@ jobs:
         env:
           BASEROW_TOKEN: ${{ secrets.BASEROW_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: bot.py
+        run: - name: Botu Calistir
+        env:
+          BASEROW_TOKEN: ${{ secrets.BASEROW_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python bot.py
