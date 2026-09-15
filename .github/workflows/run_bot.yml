@@ -1,7 +1,9 @@
 name: Yeni Haber Botu Testi
 
 on:
-  workflow_dispatch: # Sadece manuel çalıştırma butonu
+  schedule:
+    - cron: '0 8 * * *' # Her gün Türkiye saatiyle 11:00 (UTC 08:00)
+  workflow_dispatch: # İstersen elle de başlatabilmen için manuel buton
 
 jobs:
   build:
