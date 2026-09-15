@@ -27,12 +27,53 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # ==========================================
 # YARDIMCI FONKSİYONLAR
 # ==========================================
+def format_date(date_str):
+    """Siteden gelen karmaşık tarihi Baserow'un anlayacağı YYYY-MM-DD formatına çevirir"""
+    if not date_str:
+        return datetime.now().strftime("%Y-%m-%d")
+    
+    # Eğer zaten 2026-08-15 formatındaysa direkt al
+    if len(date_str) >= 10 and date_str[4] == '-' and date_str[7] == '-':
+        return date_str[:10]
+        
+    aylar = {
+        "Ocak": "01", "Şubat": "02", "Mart": "03", "Nisan": "04", "Mayıs": "05", "Haziran": "06", 
+        "Temmuz": "07", "Ağustos": "08", "Eylül": "09", "Ekim": "10", "Kasım": "11", "Aralık": "12",
+        "Oca": "01", "Şub": "02", "Mar": "03", "Nis": "04", "May": "05", "Haz": "06", 
+        "Tem": "07", "Ağu": "08", "Eyl": "09", "Eki": "10", "Kas": "11", "Ara": "12"
+    }
+    try:
+        # Yılı bul
+        match_year = re.search(r'202\d', date_str)
+        year = match_year.group(0) if match_year else str(datetime.now().year)
+        
+        # Günü bul
+        match_day = re.search(r'\b(0?[1-9]|[12][0-9]|3[01])\b', date_str)
+        day = match_day.group(0).zfill(2) if match_day else "01"
+        
+        # Ayı bul
+        month = "01"
+        for tr, num in aylar.items():
+            if tr.lower() in date_str.lower():
+                month = num
+                break
+                
+        # Eğer "15.08.2026" gibi noktalı/slajlı bir formattaysa:
+        if month == "01":
+            num_match = re.search(r'\b(0?[1-9]|[12][0-9]|3[01])[./-](0?[1-9]|1[012])[./-](202\d)\b', date_str)
+            if num_match:
+                return f"{num_match.group(3)}-{num_match.group(2).zfill(2)}-{num_match.group(1).zfill(2)}"
+                
+        return f"{year}-{month}-{day}"
+    except:
+        return datetime.now().strftime("%Y-%m-%d")
+
 def yapay_zeka_ile_ozetle(haber_metni):
     try:
         prompt = f"Sen MAKİNE AI adında endüstriyel bir platformun editörüsün. Aşağıdaki haber metnini oku ve makine sektörü profesyonelleri için en önemli detayları içeren, maksimum 3 cümlelik vurucu bir özet çıkar:\n\n{haber_metni}"
-        # YENİ NESİL MODEL (404 Hatasını çözen kısım)
+        # YEPYENİ MODEL: gemini-3.6-flash (404 hatasını çözer)
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-3.6-flash',
             contents=prompt
         )
         return response.text.strip()
@@ -71,7 +112,8 @@ def get_full_text(url):
         r = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(r.content, "html.parser")
         
-        content = soup.find('article') or soup.find('div', class_=re.compile(r'content|post|entry|detay', re.I))
+        # Forum makina için regex genişletildi (news-detail eklendi)
+        content = soup.find('article') or soup.find('div', class_=re.compile(r'content|post|entry|detay|news-detail|text', re.I))
         if content:
             paragraphs = content.find_all('p')
         else:
@@ -86,7 +128,7 @@ def get_full_text(url):
 def upload_image_to_baserow(img_url):
     if not img_url or "data:image" in img_url: return None
     
-    print(f"   📸 Görsel Baserow'a yükleniyor...")
+    # print(f"   📸 Görsel Baserow'a yükleniyor...") # Logları temizlemek için kapattık
     url = "https://api.baserow.io/api/user-files/upload-via-url/"
     headers = {
         "Authorization": f"Token {BASEROW_TOKEN}",
@@ -97,10 +139,9 @@ def upload_image_to_baserow(img_url):
         if res.status_code == 200:
             return res.json().get("name")
         else:
-            print(f"   ⚠️ Görsel yüklenemedi: {res.text}")
+            print(f"   ⚠️ Görsel web sitesi tarafından gizlenmiş, metin kaydedilecek.")
             return None
-    except Exception as e:
-        print(f"   ⚠️ Görsel indirme hatası: {e}")
+    except:
         return None
 
 def safe_create(fields):
@@ -120,15 +161,12 @@ def safe_create(fields):
     # 2. ÖZET İŞLEMİ
     metin = fields.get("haber_metni", "")
     if metin and len(metin) > 100:
-        print(f"   🤖 Gemini okuyor ve özetliyor...")
+        print(f"   🤖 Gemini özetliyor...")
         fields["haber_ozeti"] = yapay_zeka_ile_ozetle(metin)
     else:
         fields["haber_ozeti"] = "Metin çok kısa, özet oluşturulamadı."
 
-    # BASEROW HATA KAYNAĞI SİLİNDİ
-    # Tarih ekleme satırı (yayin_tarihi) Baserow kendisi atadığı için koddan çıkarıldı.
-
-    # 3. KAYIT İŞLEMİ
+    # 3. KAYIT İŞLEMİ (yayin_tarihi eklendi)
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
     headers = {
         "Authorization": f"Token {BASEROW_TOKEN}",
@@ -138,7 +176,7 @@ def safe_create(fields):
     try:
         response = requests.post(url, headers=headers, json=fields, timeout=20)
         if response.status_code == 200:
-            print(f"   ✅ Baserow'a Kaydedildi: {fields['haber_basligi'][:50]}...")
+            print(f"   ✅ Baserow'a Kaydedildi: {fields['haber_basligi'][:40]}...")
         else:
             print(f"   ❌ HATA ({response.status_code}): {response.text}")
         time.sleep(1)
@@ -168,7 +206,7 @@ def extract_formen_img(item):
 # 1. FORUM MAKİNA
 # ==========================================
 def scrape_forum_makina(ex_urls, ex_titles):
-    print(f"\n--- [1/10] Forum Makina (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- [1/10] Forum Makina (Maks 1) ---")
     headers = {'User-Agent': 'Mozilla/5.0'}
     count = 0
     for page in range(1, 2):
@@ -178,7 +216,7 @@ def scrape_forum_makina(ex_urls, ex_titles):
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("li", class_="news")
             for item in items:
-                if count >= 5: return
+                if count >= 1: return
                 date_text = item.find("div", class_="date").get_text(strip=True) if item.find("div", class_="date") else ""
                 if CURRENT_YEAR in date_text:
                     baslik = item.find("div", class_="title").get_text(strip=True)
@@ -189,7 +227,10 @@ def scrape_forum_makina(ex_urls, ex_titles):
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     tam_metin = get_full_text(link)
                     
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": img}] if img else [], "haber_metni": tam_metin, "portal": "Forum Makina", "url": link})
+                    # Gerçek yayın tarihi fonksiyona gönderiliyor
+                    gercek_tarih = format_date(date_text)
+                    
+                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": img}] if img else [], "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Forum Makina", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     count += 1
         except: continue
@@ -198,7 +239,7 @@ def scrape_forum_makina(ex_urls, ex_titles):
 # 2. LHT
 # ==========================================
 def scrape_lht(ex_urls, ex_titles):
-    print(f"\n--- [2/10] LHT (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- [2/10] LHT (Maks 1) ---")
     count = 0
     for page in range(1, 2):
         url = f"https://www.lht.com.tr/kategori/haber/page/{page}/" if page > 1 else "https://www.lht.com.tr/kategori/haber/"
@@ -206,7 +247,7 @@ def scrape_lht(ex_urls, ex_titles):
             r = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
             soup = BeautifulSoup(r.content, "html.parser")
             for art in soup.find_all("article"):
-                if count >= 5: return
+                if count >= 1: return
                 dt = art.find("time").get("datetime", "") if art.find("time") else ""
                 if CURRENT_YEAR in dt:
                     title_tag = art.find("h2")
@@ -216,8 +257,9 @@ def scrape_lht(ex_urls, ex_titles):
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     tam_metin = get_full_text(link)
+                    gercek_tarih = format_date(dt)
                     
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img, url)}] if img else [], "haber_metni": tam_metin, "portal": "LHT", "url": link})
+                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img, url)}] if img else [], "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "LHT", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     count += 1
         except: continue
@@ -226,7 +268,7 @@ def scrape_lht(ex_urls, ex_titles):
 # 3. MAKİNA MARKET
 # ==========================================
 def scrape_makina_market(ex_urls, ex_titles):
-    print(f"\n--- [3/10] Makina Market (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- [3/10] Makina Market (Maks 1) ---")
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     count = 0
     for page in range(1, 2):
@@ -236,20 +278,24 @@ def scrape_makina_market(ex_urls, ex_titles):
             soup = BeautifulSoup(r.content, "html.parser")
             articles = soup.find_all("article")
             for art in articles:
-                if count >= 5: return
+                if count >= 1: return
                 title_tag = art.find("h2")
                 if not title_tag: continue
                 link = title_tag.find("a")["href"]
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
+                time_tag = art.find("time")
+                dt = time_tag.get("datetime") or time_tag.get_text() if time_tag else ""
+                
                 img_tag = art.find("img")
                 img_src = img_tag.get("data-src") or img_tag.get("src") if img_tag else ""
                 
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 tam_metin = get_full_text(link)
+                gercek_tarih = format_date(dt)
                 
-                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": tam_metin, "portal": "Makina Market", "url": link})
+                safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Makina Market", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 count += 1
         except: continue
@@ -258,7 +304,7 @@ def scrape_makina_market(ex_urls, ex_titles):
 # 4, 5, 6. FORMEN
 # ==========================================
 def process_formen(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
     count = 0
     for page in range(1, 2):
@@ -268,22 +314,27 @@ def process_formen(base_url, portal_name, ex_urls, ex_titles):
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.select(".tdb_module_loop, .td_module_wrap, .td_module_10, .td_module_mx1")
             for item in items:
-                if count >= 5: return
+                if count >= 1: return
                 title_tag = item.find("h3") or item.find("h2")
                 if not title_tag or not title_tag.find("a"): continue
                 link = title_tag.find("a")["href"]
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
+                time_tag = item.find("time")
+                dt = time_tag.get("datetime") or time_tag.get_text() if time_tag else ""
+                
                 img_src = extract_formen_img(item)
                 
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 tam_metin = get_full_text(link)
+                gercek_tarih = format_date(dt)
                 
                 safe_create({
                     "haber_basligi": baslik, 
                     "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], 
-                    "haber_metni": tam_metin, 
+                    "haber_metni": tam_metin,
+                    "yayin_tarihi": gercek_tarih,
                     "portal": portal_name, 
                     "url": link
                 })
@@ -295,7 +346,7 @@ def process_formen(base_url, portal_name, ex_urls, ex_titles):
 # 7, 8. İSTİF MH
 # ==========================================
 def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     count = 0
     for page in range(1, 2):
@@ -305,12 +356,15 @@ def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("div", class_="kanews-post-item")
             for item in items:
-                if count >= 5: return
+                if count >= 1: return
                 title_tag = item.find("h3")
                 if not title_tag: continue
                 link = title_tag.find("a")["href"]
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
+                
+                time_tag = item.find("span", class_="kanews-date")
+                dt = time_tag.get_text(strip=True) if time_tag else ""
                 
                 img_tag = item.find("img")
                 img_src = img_tag.get("src") or img_tag.get("data-src") if img_tag else ""
@@ -328,19 +382,20 @@ def process_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 if is_valid:
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     tam_metin = get_full_text(link)
+                    gercek_tarih = format_date(dt)
                     
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": tam_metin, "portal": portal_name, "url": link})
+                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     count += 1
                 else:
-                    print(f"   ⏭️ Eski Haber Atlandı: {baslik[:30]}")
+                    pass
         except: continue
 
 # ==========================================
 # 9. MADEN OCAK
 # ==========================================
 def scrape_maden_ocak(ex_urls, ex_titles):
-    print(f"\n--- [9/10] Maden Ocak (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- [9/10] Maden Ocak (Maks 1) ---")
     headers = {'User-Agent': 'Mozilla/5.0'}
     count = 0
     for page in range(1, 2):
@@ -349,17 +404,19 @@ def scrape_maden_ocak(ex_urls, ex_titles):
             r = requests.get(url, timeout=15, headers=headers)
             soup = BeautifulSoup(r.content, "html.parser")
             for art in soup.find_all("article"):
-                if count >= 5: return
+                if count >= 1: return
                 time_tag = art.find("time")
                 if time_tag and CURRENT_YEAR in time_tag.get("datetime", ""):
+                    dt = time_tag.get("datetime", "")
                     title_tag = art.find("h2"); link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     img_tag = art.find("img"); img_src = img_tag.get("src", "") if img_tag else ""
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     tam_metin = get_full_text(link)
+                    gercek_tarih = format_date(dt)
                     
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": tam_metin, "portal": "Maden Ocak Dergisi", "url": link})
+                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, url)}] if img_src else [], "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Maden Ocak Dergisi", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     count += 1
         except: continue
@@ -368,7 +425,7 @@ def scrape_maden_ocak(ex_urls, ex_titles):
 # 10. ŞANTİYE
 # ==========================================
 def scrape_santiye(ex_urls, ex_titles):
-    print(f"\n--- [10/10] Şantiye (Test Modu: Maks. 5 Haber) ---")
+    print(f"\n--- [10/10] Şantiye (Maks 1) ---")
     headers = {'User-Agent': 'Mozilla/5.0'}
     count = 0
     for page in range(1, 2):
@@ -377,9 +434,10 @@ def scrape_santiye(ex_urls, ex_titles):
             r = requests.get(url, timeout=15, headers=headers)
             soup = BeautifulSoup(r.content, "html.parser")
             for content in soup.find_all("div", class_="post-content"):
-                if count >= 5: return
+                if count >= 1: return
                 date_tag = content.find("li")
                 if date_tag and CURRENT_YEAR in date_tag.get_text():
+                    dt = date_tag.get_text(strip=True)
                     title_tag = content.find("h2"); a_tag = title_tag.find("a"); baslik = a_tag.get_text(strip=True)
                     link = urljoin("https://www.santiye.com.tr", a_tag["href"])
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
@@ -387,8 +445,9 @@ def scrape_santiye(ex_urls, ex_titles):
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     tam_metin = get_full_text(link)
+                    gercek_tarih = format_date(dt)
                     
-                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, "https://www.santiye.com.tr")}] if img_src else [], "haber_metni": tam_metin, "portal": "Şantiye", "url": link})
+                    safe_create({"haber_basligi": baslik, "gorsel": [{"url": clean_img(img_src, "https://www.santiye.com.tr")}] if img_src else [], "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Şantiye", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     count += 1
         except: continue
@@ -413,4 +472,4 @@ if __name__ == "__main__":
     scrape_maden_ocak(urls, titles)
     scrape_santiye(urls, titles)
     
-    print(f"\n🏁 İŞLEM TAMAMLANDI. TOPLAM VERİ: {len(urls)}")
+    print(f"\n🏁 İŞLEM TAMAMLANDI.")
