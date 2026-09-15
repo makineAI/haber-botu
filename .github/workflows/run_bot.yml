@@ -1,6 +1,8 @@
 name: Haber Botu Testi
 
 on:
+  schedule:
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
 jobs:
@@ -11,14 +13,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Python Kurulumu
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Kutuphaneleri Yukle
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 google-generativeai python-dotenv
+          pip install requests beautifulsoup4 google-genai python-dotenv
 
       - name: Botu Calistir
         env:
