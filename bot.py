@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote
 from datetime import datetime
-from google import genai # YENİ NESİL KÜTÜPHANE
+from google import genai
 
 load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
@@ -22,7 +22,6 @@ if not BASEROW_TOKEN or not GEMINI_API_KEY:
     print("❌ HATA: Şifreler bulunamadı!")
     exit()
 
-# YENİ NESİL YAPAY ZEKA KURULUMU
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================
@@ -31,8 +30,9 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 def yapay_zeka_ile_ozetle(haber_metni):
     try:
         prompt = f"Sen MAKİNE AI adında endüstriyel bir platformun editörüsün. Aşağıdaki haber metnini oku ve makine sektörü profesyonelleri için en önemli detayları içeren, maksimum 3 cümlelik vurucu bir özet çıkar:\n\n{haber_metni}"
+        # YENİ NESİL MODEL (404 Hatasını çözen kısım)
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt
         )
         return response.text.strip()
@@ -84,7 +84,6 @@ def get_full_text(url):
         return ""
 
 def upload_image_to_baserow(img_url):
-    """Görseli önce Baserow sunucusuna yükler, sonra adını döndürür."""
     if not img_url or "data:image" in img_url: return None
     
     print(f"   📸 Görsel Baserow'a yükleniyor...")
@@ -114,7 +113,7 @@ def safe_create(fields):
     uploaded_name = upload_image_to_baserow(img_url) if img_url else None
     
     if uploaded_name:
-        fields["gorsel"] = [{"name": uploaded_name}] # Baserow'un istediği format
+        fields["gorsel"] = [{"name": uploaded_name}]
     else:
         fields["gorsel"] = []
 
@@ -126,7 +125,8 @@ def safe_create(fields):
     else:
         fields["haber_ozeti"] = "Metin çok kısa, özet oluşturulamadı."
 
-    fields["yayin_tarihi"] = datetime.now().strftime("%Y-%m-%d")
+    # BASEROW HATA KAYNAĞI SİLİNDİ
+    # Tarih ekleme satırı (yayin_tarihi) Baserow kendisi atadığı için koddan çıkarıldı.
 
     # 3. KAYIT İŞLEMİ
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
