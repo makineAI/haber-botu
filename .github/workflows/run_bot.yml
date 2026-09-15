@@ -1,9 +1,7 @@
-name: Haber Botu Otomatik Calistir
+name: Haber Botu Manuel Test
 
 on:
-  schedule:
-    - cron: '0 8 * * *' # Her gün Türkiye saatiyle 11:00 (UTC 08:00)
-  workflow_dispatch: # Manuel çalıştırma butonu ekler
+  workflow_dispatch: # Otomatik tarama kapatıldı. Sadece GitHub üzerinden sen butona basınca çalışır.
 
 jobs:
   build:
@@ -20,9 +18,10 @@ jobs:
       - name: Kutuphaneleri Yukle
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 pyairtable python-dotenv
+          pip install requests beautifulsoup4 google-generativeai python-dotenv
 
       - name: Botu Calistir
         env:
-          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }} # GitHub Secrets'tan alır
-        run: python bot.py
+          BASEROW_TOKEN: ${{ secrets.BASEROW_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: bot.py
