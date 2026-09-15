@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote
 from datetime import datetime
-import google.generativeai as genai
+from google import genai # YENİ NESİL KÜTÜPHANE
 
 load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
@@ -22,8 +22,8 @@ if not BASEROW_TOKEN or not GEMINI_API_KEY:
     print("❌ HATA: Şifreler bulunamadı!")
     exit()
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# YENİ NESİL YAPAY ZEKA KURULUMU
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================
 # YARDIMCI FONKSİYONLAR
@@ -31,8 +31,10 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 def yapay_zeka_ile_ozetle(haber_metni):
     try:
         prompt = f"Sen MAKİNE AI adında endüstriyel bir platformun editörüsün. Aşağıdaki haber metnini oku ve makine sektörü profesyonelleri için en önemli detayları içeren, maksimum 3 cümlelik vurucu bir özet çıkar:\n\n{haber_metni}"
-        # Gemini de takılmasın diye timeout parametreleri arka planda Google tarafından yönetilir
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         print(f"   ⚠️ Özet çıkarma hatası: {e}")
@@ -47,8 +49,6 @@ def get_existing_data():
     sayfa_sayisi = 1
     try:
         while url:
-            print(f"   👉 Sayfa {sayfa_sayisi} çekiliyor...")
-            # TIMEOUT EKLENDİ (Takılmayı önlemek için)
             res = requests.get(url, headers=headers, timeout=20).json()
             for r in res.get('results', []):
                 u = r.get('url', '').strip().lower()
@@ -58,15 +58,11 @@ def get_existing_data():
             
             url = res.get('next')
             sayfa_sayisi += 1
-            
-            # Sonsuz döngüden koruma: 50 sayfadan fazlaysa dur
-            if sayfa_sayisi > 50:
-                print("   ⚠️ Çok fazla veri var, kontrol durduruldu.")
-                break
+            if sayfa_sayisi > 50: break
                 
         return ex_urls, ex_titles
     except Exception as e:
-        print(f"❌ Veri çekme hatası (Baserow kilitlendi): {e}")
+        print(f"❌ Veri çekme hatası (Baserow): {e}")
         return set(), set()
 
 def get_full_text(url):
@@ -87,14 +83,42 @@ def get_full_text(url):
         print(f"   ⚠️ Tam metin çekilemedi: {url} | Hata: {e}")
         return ""
 
-def safe_create(fields):
-    gorsel_verisi = fields.get("gorsel", "")
-    if isinstance(gorsel_verisi, list):
-        if len(gorsel_verisi) > 0 and "url" in gorsel_verisi[0]:
-            fields["gorsel"] = gorsel_verisi[0]["url"]
+def upload_image_to_baserow(img_url):
+    """Görseli önce Baserow sunucusuna yükler, sonra adını döndürür."""
+    if not img_url or "data:image" in img_url: return None
+    
+    print(f"   📸 Görsel Baserow'a yükleniyor...")
+    url = "https://api.baserow.io/api/user-files/upload-via-url/"
+    headers = {
+        "Authorization": f"Token {BASEROW_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    try:
+        res = requests.post(url, headers=headers, json={"url": img_url}, timeout=20)
+        if res.status_code == 200:
+            return res.json().get("name")
         else:
-            fields["gorsel"] = ""
+            print(f"   ⚠️ Görsel yüklenemedi: {res.text}")
+            return None
+    except Exception as e:
+        print(f"   ⚠️ Görsel indirme hatası: {e}")
+        return None
 
+def safe_create(fields):
+    # 1. GÖRSEL İŞLEMİ
+    gorsel_verisi = fields.get("gorsel", "")
+    img_url = ""
+    if isinstance(gorsel_verisi, list) and len(gorsel_verisi) > 0:
+        img_url = gorsel_verisi[0].get("url", "")
+        
+    uploaded_name = upload_image_to_baserow(img_url) if img_url else None
+    
+    if uploaded_name:
+        fields["gorsel"] = [{"name": uploaded_name}] # Baserow'un istediği format
+    else:
+        fields["gorsel"] = []
+
+    # 2. ÖZET İŞLEMİ
     metin = fields.get("haber_metni", "")
     if metin and len(metin) > 100:
         print(f"   🤖 Gemini okuyor ve özetliyor...")
@@ -104,6 +128,7 @@ def safe_create(fields):
 
     fields["yayin_tarihi"] = datetime.now().strftime("%Y-%m-%d")
 
+    # 3. KAYIT İŞLEMİ
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
     headers = {
         "Authorization": f"Token {BASEROW_TOKEN}",
@@ -111,7 +136,6 @@ def safe_create(fields):
     }
     
     try:
-        # TIMEOUT EKLENDİ (Sonsuz beklemeyi bitiren kritik yer)
         response = requests.post(url, headers=headers, json=fields, timeout=20)
         if response.status_code == 200:
             print(f"   ✅ Baserow'a Kaydedildi: {fields['haber_basligi'][:50]}...")
