@@ -12,7 +12,7 @@ load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
 
 # ==========================================
-# AYARLAR (BASEROW & GEMINI)
+# AYARLAR
 # ==========================================
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
@@ -52,30 +52,63 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
+
 # ==========================================
-# ☢️ NÜKLEER GÖRSEL AVCISI (Formen, Şantiye, Forum Makina Tümü İçin)
+# GÖRSEL AVCILARI (SİTEYE ÖZEL KESKİN NİŞANCILAR)
 # ==========================================
+
+# GENEL SİTELER İÇİN: Sadece standart <img> etiketine bakar
 def get_image_url(soup_context, base_url):
     if not soup_context: return ""
-    
-    # HTML'i metne çevir ve CSS/HTML etiketlerindeki pislikleri (&quot; vb.) temizle
-    html_str = str(soup_context).replace('&quot;', ' ').replace('"', ' ').replace("'", ' ')
-    
-    # 1. Tam linkleri (https://...jpg) bul
-    urls = re.findall(r'(https?://\S+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
-    if urls:
-        return urls[0].split('?')[0] # Şantiye'nin ?v=1.0 çöpünü atar
-        
-    # 2. Göreceli linkleri (/uploads/...jpg) bul
-    urls_rel = re.findall(r'(\S+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
-    for u in urls_rel:
-        u = u.split('?')[0]
-        if not u.startswith('http'):
-            return urljoin(base_url, u).replace("http://", "https://")
-        return u
-        
+    img = soup_context.find("img")
+    if img and img.has_attr("src"):
+        url = img["src"].split('?')[0] # ?v=1.0 gibi kısımları atar
+        if not url.startswith('http'): return urljoin(base_url, url)
+        return url
     return ""
 
+# FORUM MAKİNA VE FORMEN İÇİN (data-img-url Arayıcı)
+def extract_formen_forum_img(soup_context, base_url):
+    if not soup_context: return ""
+    
+    # Öncelikle span içindeki data-img-url var mı diye bak (senin attığın koddaki gibi)
+    thumb = soup_context.find(attrs={"data-img-url": True})
+    if thumb: return thumb["data-img-url"]
+    
+    # Yoksa img src ara
+    img = soup_context.find("img")
+    if img and img.has_attr("src"):
+        url = img["src"]
+        if not url.startswith('http'): return urljoin(base_url, url)
+        return url
+    
+    return ""
+
+# ŞANTİYE İÇİN (Parent Node - Üst Etiket Arayıcı)
+def extract_santiye_img(soup_context, base_url):
+    if not soup_context: return ""
+    
+    # İç sayfadaki galeri resmi
+    img = soup_context.find("img")
+    if img and img.has_attr("src"):
+        url = img["src"].split('?')[0] # Sondaki ?v=1.0'ı siler
+        if not url.startswith('http'): return urljoin(base_url, url)
+        return url
+        
+    # Eğer haber listesindeyse (parent row içinde resmi bulma)
+    row = soup_context.find_parent(class_="row")
+    if row:
+        img = row.find("img")
+        if img and img.has_attr("src"):
+            url = img["src"].split('?')[0]
+            if not url.startswith('http'): return urljoin(base_url, url)
+            return url
+    return ""
+
+
+# ==========================================
+# YAPAY ZEKA VE BASEROW
+# ==========================================
 def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni):
     prompt = f"""Sen MAKİNE AI platformunun baş editörü ve baş analistisin. 
 Aşağıdaki haberi oku ve bana YALNIZCA aşağıdaki XML etiketleri (tag) arasında çıktı ver. Başka hiçbir açıklama yazma.
@@ -91,7 +124,7 @@ Haber Metni:
 {haber_metni}"""
 
     try:
-        time.sleep(1) # Sadece 1 saniye dinlenme
+        time.sleep(1)
         response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         text = response.text
         
@@ -180,7 +213,7 @@ def safe_create(fields):
     except Exception as e: print(f"   ❌ Bağlantı Hatası: {e}")
 
 # ==========================================
-# TARAMA FONKSİYONLARI (HER SİTEDEN SADECE 1 ÖRNEK ÇEKER!)
+# TARAMA FONKSİYONLARI (SİTEYE ÖZEL ÇEKİCİLER İLE 1 ÖRNEK)
 # ==========================================
 def scrape_forum_makina(ex_urls, ex_titles):
     print(f"\n--- Tarama: Forum Makina (Maks 1) ---")
@@ -195,16 +228,18 @@ def scrape_forum_makina(ex_urls, ex_titles):
                 link = urljoin("https://www.forummakina.com.tr", item.find("a")["href"])
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                list_img = get_image_url(item, url)
+                # ÖZEL FONKSİYON
+                list_img = extract_formen_forum_img(item, url)
+                
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
-                inner_img = get_image_url(BeautifulSoup(inner_r.content, "html.parser").select_one('.newsDetail'), url)
+                inner_img = extract_formen_forum_img(BeautifulSoup(inner_r.content, "html.parser").select_one('.newsDetail'), url)
                 img = inner_img if inner_img else list_img
                 
                 tam_metin = extract_clean_text(inner_r.content, '.newsDetail')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                return # 1 HABER ÇEKİNCE DURUR
+                return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
@@ -222,7 +257,9 @@ def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True); link = title_tag.find("a")["href"]
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
+                # GENEL FONKSİYON
                 list_img = get_image_url(art, url)
+                
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
                 inner_img = get_image_url(BeautifulSoup(inner_r.content, "html.parser").select_one('.single-post-thumb'), url)
@@ -231,7 +268,7 @@ def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content.articlebody')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                return # 1 HABER ÇEKİNCE DURUR
+                return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_makina_market(ex_urls, ex_titles):
@@ -248,6 +285,8 @@ def scrape_makina_market(ex_urls, ex_titles):
             
             dt_tag = art.find("div", class_="cs-meta-date")
             dt = dt_tag.get_text(strip=True) if dt_tag else ""
+            
+            # GENEL FONKSİYON
             list_img = get_image_url(art, url)
             
             print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
@@ -258,7 +297,7 @@ def scrape_makina_market(ex_urls, ex_titles):
             tam_metin = extract_clean_text(inner_r.content, '.entry-content')
             safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Makina Market", "url": link})
             ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-            return # 1 HABER ÇEKİNCE DURUR
+            return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
@@ -273,20 +312,21 @@ def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
             link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
             if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
             
-            list_img = get_image_url(item, url)
+            # ÖZEL FONKSİYON
+            list_img = extract_formen_forum_img(item, url)
             
             print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
             inner_r = requests.get(link, timeout=20, headers=HEADERS)
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
             dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
             
-            inner_img = get_image_url(inner_soup.select_one('.tdb_single_featured_image'), url)
+            inner_img = extract_formen_forum_img(inner_soup.select_one('.tdb_single_featured_image'), url)
             img = inner_img if inner_img else list_img
             
             tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
             safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
             ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-            return # 1 HABER ÇEKİNCE DURUR
+            return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
@@ -301,7 +341,9 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
             link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
             if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
             
+            # GENEL FONKSİYON
             list_img = get_image_url(item, url)
+            
             print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
             inner_r = requests.get(link, timeout=20, headers=HEADERS)
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
@@ -313,7 +355,7 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
             tam_metin = extract_clean_text(inner_r.content, '.entry-content-inner')
             safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
             ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-            return # 1 HABER ÇEKİNCE DURUR
+            return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_santiye(ex_urls, ex_titles):
@@ -330,20 +372,19 @@ def scrape_santiye(ex_urls, ex_titles):
                 link = urljoin("https://www.santiye.com.tr", a_tag["href"])
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                # Şantiye için Parent Row'a bakarak list_img alma
-                parent_row = content.find_parent("div", class_="news-post")
-                list_img = get_image_url(parent_row, "https://www.santiye.com.tr")
+                # ÖZEL FONKSİYON
+                list_img = extract_santiye_img(content, "https://www.santiye.com.tr")
                 
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
-                inner_img = get_image_url(BeautifulSoup(inner_r.content, "html.parser").select_one('.post-gallery'), "https://www.santiye.com.tr")
+                inner_img = extract_santiye_img(BeautifulSoup(inner_r.content, "html.parser").select_one('.post-gallery'), "https://www.santiye.com.tr")
                 
                 img = inner_img if inner_img else list_img
                 
                 tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                return # 1 HABER ÇEKİNCE DURUR
+                return 
     except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
