@@ -46,14 +46,64 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
-def clean_img_url(img_tag, base_url):
-    """İç sayfadan bulunan img etiketinin linkini temizler ve tam URL yapar"""
-    if img_tag and img_tag.get("src"):
-        src = img_tag.get("src").split('?')[0] # Şantiyedeki ?v=1.0 gibi kısımları siler
-        if not src.startswith('http'):
-            src = urljoin(base_url, src)
-        return src.replace("http://", "https://")
+# ==========================================
+# NİHAİ ÇÖZÜM: OG:IMAGE (SOSYAL MEDYA KAPAĞI) AVCISI
+# ==========================================
+def get_article_cover_image(inner_soup, base_url):
+    """WhatsApp ve Facebook'un kapak resmi çektiği meta etiketlerini kullanır. %100 kesin çözümdür."""
+    if not inner_soup: return ""
+    
+    # 1. TAKTİK: Sitenin beynine gömülü orijinal kapak resmi (Tüm sitelerde standarttır)
+    og_img = inner_soup.find("meta", property="og:image")
+    if og_img and og_img.get("content"):
+        url = og_img["content"].split('?')[0]
+        if not url.startswith("http"): url = urljoin(base_url, url)
+        return url.replace("http://", "https://")
+        
+    # 2. TAKTİK: Twitter kapak resmi (Yedek)
+    tw_img = inner_soup.find("meta", attrs={"name": "twitter:image"})
+    if tw_img and tw_img.get("content"):
+        url = tw_img["content"].split('?')[0]
+        if not url.startswith("http"): url = urljoin(base_url, url)
+        return url.replace("http://", "https://")
+
+    # 3. TAKTİK: Senin gönderdiğin HTML'ye göre Formen Özel
+    formen_a = inner_soup.find("a", class_="td-modal-image")
+    if formen_a and formen_a.get("href"):
+        url = formen_a["href"].split('?')[0]
+        if not url.startswith("http"): url = urljoin(base_url, url)
+        return url.replace("http://", "https://")
+        
+    # 4. TAKTİK: Senin gönderdiğin HTML'ye göre Şantiye Özel
+    santiye_img = inner_soup.select_one(".post-gallery img") or inner_soup.select_one("img.img-responsive")
+    if santiye_img and santiye_img.get("src"):
+        url = santiye_img["src"].split('?')[0]
+        if not url.startswith("http"): url = urljoin(base_url, url)
+        return url.replace("http://", "https://")
+
     return ""
+
+def clean_html(soup):
+    garbage = ['.share', '.twit', 'script', 'style', '.pk-share-buttons-wrap', '#comments', '.cs-entry__subscribe', '#related-articles', '.td-post-sharing', '.tdb_single_tags', '.tdb_single_comments', '#newsletter']
+    for sel in garbage:
+        for tag in soup.select(sel): tag.decompose()
+    return soup
+
+def extract_clean_text(html_content, container_selector, is_santiye=False):
+    soup = BeautifulSoup(html_content, "html.parser")
+    soup = clean_html(soup)
+    content = soup.select_one(container_selector)
+    if not content: content = soup.find('article') or soup.find('div', class_=re.compile(r'content|post|entry|detay|news-detail|text', re.I))
+    if not content: return ""
+        
+    if is_santiye:
+        hr_tag = content.find('hr')
+        if hr_tag:
+            for sibling in hr_tag.find_next_siblings(): sibling.decompose()
+            hr_tag.decompose()
+            
+    paragraphs = [p.get_text(strip=True) for p in content.find_all('p') if p.get_text(strip=True)]
+    return "\n".join(paragraphs) if paragraphs else content.get_text(separator="\n", strip=True)
 
 def upload_image_to_baserow(img_url):
     if not img_url: return None
@@ -86,7 +136,7 @@ def safe_create(fields):
     except Exception as e: print(f"   ❌ Bağlantı Hatası: {e}")
 
 # ==========================================
-# İÇ SAYFADAN (HABER METNİNDEN) GÖRSEL ÇEKEN TARAYICILAR
+# İÇ SAYFALARDAN GÖRSEL ALAN TARAYICILAR
 # ==========================================
 def scrape_forum_makina():
     print(f"\n--- Tarama: Forum Makina (Maks 1) ---")
@@ -103,9 +153,8 @@ def scrape_forum_makina():
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 
-                # İç sayfadaki resmi al
-                img_tag = inner_soup.select_one('.newsDetail img') or inner_soup.find("img")
-                img = clean_img_url(img_tag, "https://www.forummakina.com.tr")
+                # Yeni Nesil Çekici
+                img = get_article_cover_image(inner_soup, "https://www.forummakina.com.tr")
                 
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": "", "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
                 return 
@@ -126,9 +175,8 @@ def scrape_formen(base_url, portal_name):
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
             dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
             
-            # İç sayfadaki resmi al (Attığın HTML'ye göre td-modal-image veya entry-thumb)
-            img_tag = inner_soup.select_one('a.td-modal-image img') or inner_soup.select_one('img.entry-thumb') or inner_soup.select_one('.tdb_single_content img')
-            img = clean_img_url(img_tag, base_url)
+            # Yeni Nesil Çekici
+            img = get_article_cover_image(inner_soup, base_url)
             
             safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": "", "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
             return 
@@ -150,9 +198,8 @@ def scrape_santiye():
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 
-                # İç sayfadaki resmi al (Attığın HTML'ye göre img-responsive)
-                img_tag = inner_soup.select_one('img.img-responsive') or inner_soup.select_one('.post-content img')
-                img = clean_img_url(img_tag, "https://www.santiye.com.tr")
+                # Yeni Nesil Çekici
+                img = get_article_cover_image(inner_soup, "https://www.santiye.com.tr")
                 
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": "", "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
                 return 
@@ -175,8 +222,8 @@ def scrape_newsplus_theme(base_url, portal_name):
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 
-                img_tag = inner_soup.select_one('.single-post-thumb img') or inner_soup.select_one('article img')
-                img = clean_img_url(img_tag, base_url)
+                # Yeni Nesil Çekici
+                img = get_article_cover_image(inner_soup, base_url)
                 
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": "", "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 return 
@@ -198,8 +245,8 @@ def scrape_makina_market():
             inner_r = requests.get(link, timeout=20, headers=HEADERS)
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
             
-            img_tag = inner_soup.select_one('.cs-entry__thumbnail img') or inner_soup.select_one('.entry-content img')
-            img = clean_img_url(img_tag, "https://makina-market.com.tr")
+            # Yeni Nesil Çekici
+            img = get_article_cover_image(inner_soup, "https://makina-market.com.tr")
             
             safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": "", "yayin_tarihi": format_date(dt), "portal": "Makina Market", "url": link})
             return 
@@ -220,8 +267,8 @@ def scrape_istif_mh():
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
             dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
             
-            img_tag = inner_soup.select_one('.kanews-article-thumbnail img') or inner_soup.select_one('.entry-content-inner img')
-            img = clean_img_url(img_tag, "https://istifmaterialhandling.com")
+            # Yeni Nesil Çekici
+            img = get_article_cover_image(inner_soup, "https://istifmaterialhandling.com")
             
             safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": "", "yayin_tarihi": format_date(dt), "portal": "İstif MH - Haber", "url": link})
             return 
