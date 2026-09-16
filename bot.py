@@ -74,11 +74,14 @@ Haber Metni:
 {haber_metni}"""
 
     try:
-        time.sleep(4) # Kotayı korumak için kısa uyku
-        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+        # Dakikada 12'den fazla istek atmamak için her işlem öncesi 5 saniye bekle
+        time.sleep(5) 
+        
+        # Modeli tekrar çalışan versiyona (3.6) güncelledik!
+        response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         text = response.text
         
-        # Etiketlerin içini %100 başarıyla çeken regex (arama) motoru
+        # Etiketlerin içini %100 başarıyla çeken arama motoru
         ozet_match = re.search(r'<ozet>(.*?)</ozet>', text, re.DOTALL | re.IGNORECASE)
         analiz_match = re.search(r'<analiz>(.*?)</analiz>', text, re.DOTALL | re.IGNORECASE)
         
@@ -89,13 +92,16 @@ Haber Metni:
             
     except Exception as e:
         hata_mesaji = str(e)
+        # Eğer Google 20 Limitini doldurduğumuzu söylerse
         if "429" in hata_mesaji or "RESOURCE_EXHAUSTED" in hata_mesaji:
             if deneme_sayisi < 3:
-                print(f"   ⏳ Google Limiti! 30 saniye bekleniyor... (Deneme: {deneme_sayisi+1}/3)")
-                time.sleep(30)
+                print(f"   ⏳ Dakikalık Limit (20) aşıldı! 65 saniye bekleniyor... (Deneme: {deneme_sayisi+1}/3)")
+                time.sleep(65)
                 return yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni, deneme_sayisi + 1)
-            else: return "Özet çıkarılamadı (Limit Aşıldı).", "Analiz Yapılamadı."
-        else: return "Yapay Zeka Hatası.", f"Detay: {e}"
+            else: 
+                return "Günlük API kotası bittiği için özet çıkarılamadı.", "Yeni API Key gerekli."
+        else: 
+            return "Yapay Zeka Hatası.", f"Detay: {e}"
 
 def get_existing_data():
     ex_urls, ex_titles = set(), set()
