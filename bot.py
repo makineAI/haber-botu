@@ -16,7 +16,7 @@ CURRENT_YEAR = str(datetime.now().year)
 # ==========================================
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-BASEROW_TABLE_ID = "1197624"
+BASEROW_TABLE_ID = "1197624" # Kendi Tablo ID'n
 
 if not BASEROW_TOKEN or not GEMINI_API_KEY:
     print("❌ HATA: Şifreler bulunamadı!")
@@ -24,7 +24,6 @@ if not BASEROW_TOKEN or not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Sitelerin bot olduğumuzu anlayıp engellememesi için güçlü tarayıcı kimliği (Anti-Ban)
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -73,8 +72,8 @@ Haber Metni:
 {haber_metni}"""
 
     try:
-        # API Limitini (Kota) korumak için her işlemden önce 3 saniye dinlen
-        time.sleep(3) 
+        # API Limitini (Dakikada 15 İstek) korumak için her işlemden önce 4.5 saniye dinlen
+        time.sleep(4.5) 
         
         response = client.models.generate_content(
             model='gemini-3.6-flash',
@@ -82,7 +81,6 @@ Haber Metni:
         )
         text = response.text
         
-        # Regex ile ayırma (Çok daha güvenli ayıklama)
         ozet_match = re.search(r'\[ÖZET\](.*?)\[ANALİZ\]', text, re.DOTALL | re.IGNORECASE)
         analiz_match = re.search(r'\[ANALİZ\](.*)', text, re.DOTALL | re.IGNORECASE)
         
@@ -97,11 +95,11 @@ Haber Metni:
             
     except Exception as e:
         hata_mesaji = str(e)
-        # Google Kotasına (429 Hatası) takılırsak sistemi çökertmeyip 30 saniye uyutuyoruz (Maks 3 kez dener)
+        # Google Kotasına takılırsak sistemi çökertmeyip 65 sn bekletiyoruz (1 dakikalık banın geçmesi için)
         if "429" in hata_mesaji or "RESOURCE_EXHAUSTED" in hata_mesaji:
             if deneme_sayisi < 3:
-                print(f"   ⏳ Gemini API Limiti aşıldı. 30 saniye bekleniyor... (Deneme: {deneme_sayisi+1}/3)")
-                time.sleep(30)
+                print(f"   ⏳ Limit aşıldı! 65 saniye uyunuyor... Lütfen bekleyin. (Deneme: {deneme_sayisi+1}/3)")
+                time.sleep(65)
                 return yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni, deneme_sayisi + 1)
             else:
                 return "API hız limiti kalıcı olarak aşıldığı için özet çıkarılamadı.", "Analiz yapılamadı."
@@ -149,7 +147,6 @@ def extract_clean_text(html_content, container_selector, is_santiye=False):
     if not content: content = soup.find('article') or soup.find('div', class_=re.compile(r'content|post|entry|detay|news-detail|text', re.I))
     if not content: return ""
         
-    # Şantiye için <hr> sonrası abone çöplerini temizleme
     if is_santiye:
         hr_tag = content.find('hr')
         if hr_tag:
@@ -157,18 +154,24 @@ def extract_clean_text(html_content, container_selector, is_santiye=False):
             hr_tag.decompose()
             
     paragraphs = [p.get_text(strip=True) for p in content.find_all('p') if p.get_text(strip=True)]
-    
-    # Eğer <p> bulunamazsa zorla genel metni al (Engellemelere karşı)
     if not paragraphs:
         backup_text = content.get_text(separator="\n", strip=True)
         if len(backup_text) > 50: return backup_text
         
     return "\n".join(paragraphs)
 
-def clean_img(url, base_url):
+# YENİ GÖRSEL TEMİZLEYİCİ: Hem etiket (tag) hem url alır, data-img-url'yi çözer
+def clean_img(tag_or_url, base_url):
+    if not tag_or_url: return ""
+    
+    if isinstance(tag_or_url, str):
+        url = tag_or_url
+    else:
+        # data-img-url özelliğini önce kontrol eder (Formen için kritik!)
+        url = tag_or_url.get('data-img-url') or tag_or_url.get('src') or ""
+        
     if not url or "data:image" in url: return ""
     try:
-        # Soru işareti (?v=1.0) gibi versiyon eklerini silip URL'yi temizler
         actual_url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip().split('?')[0]
         return urljoin(base_url, actual_url).replace("http://", "https://")
     except: return ""
@@ -191,7 +194,6 @@ def safe_create(fields):
     fields["gorsel"] = [{"name": uploaded_name}] if uploaded_name else []
 
     metin = fields.get("haber_metni", "")
-    # Karakter sınırı 50'ye düşürüldü ki kısa metinlerde bile analiz çalışsın
     if metin and len(metin) > 50: 
         print(f"   🤖 Gemini analiz ediyor... (Metin Uzunluğu: {len(metin)} Karakter)")
         ozet, analiz = yapay_zeka_ile_ozetle_ve_analiz_et(metin)
@@ -202,7 +204,7 @@ def safe_create(fields):
         fields["haber_ozeti"] = "Metin tespit edilemedi (Site botları engellemiş olabilir)."
         fields["mai_analizi"] = "-"
 
-    fields.pop("haber_metni", None) # Veritabanına şişkinlik yapmaması için siliyoruz
+    fields.pop("haber_metni", None)
 
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
     headers = {"Authorization": f"Token {BASEROW_TOKEN}", "Content-Type": "application/json"}
@@ -230,14 +232,14 @@ def scrape_forum_makina(ex_urls, ex_titles):
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     
                     list_img_tag = item.find("img")
-                    list_img = clean_img(list_img_tag["src"], url) if list_img_tag else ""
+                    list_img = clean_img(list_img_tag, url)
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     inner_r = requests.get(link, timeout=15, headers=HEADERS)
                     inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                     
                     img_tag = inner_soup.select_one('.newsDetail img')
-                    img = clean_img(img_tag['src'], "https://www.forummakina.com.tr") if img_tag else list_img
+                    img = clean_img(img_tag, "https://www.forummakina.com.tr") if img_tag else list_img
                     
                     tam_metin = extract_clean_text(inner_r.content, '.newsDetail')
                     gercek_tarih = format_date(date_text)
@@ -267,14 +269,14 @@ def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     
                     list_img_tag = art.find("img")
-                    list_img = clean_img(list_img_tag["src"], url) if list_img_tag else ""
+                    list_img = clean_img(list_img_tag, url)
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     inner_r = requests.get(link, timeout=15, headers=HEADERS)
                     inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                     
                     img_tag = inner_soup.select_one('.single-post-thumb img')
-                    img = clean_img(img_tag.get('src'), base_url) if img_tag else list_img
+                    img = clean_img(img_tag, base_url) if img_tag else list_img
                     
                     tam_metin = extract_clean_text(inner_r.content, '.entry-content.articlebody')
                     gercek_tarih = format_date(dt)
@@ -305,14 +307,14 @@ def scrape_makina_market(ex_urls, ex_titles):
                 dt = date_tag.get_text(strip=True) if date_tag else ""
                 
                 list_img_tag = art.find("img")
-                list_img = clean_img(list_img_tag["src"], url) if list_img_tag else ""
+                list_img = clean_img(list_img_tag, url)
                 
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=20, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 
                 img_tag = inner_soup.select_one('.cs-entry__thumbnail img')
-                img = clean_img(img_tag.get("src"), url) if img_tag else list_img
+                img = clean_img(img_tag, url) if img_tag else list_img
                 
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content')
                 gercek_tarih = format_date(dt)
@@ -339,6 +341,10 @@ def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
                 baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
+                # Formen List Görseli 'data-img-url' özelliğinden çekiliyor!
+                list_img_tag = item.select_one('[data-img-url]') or item.find('img')
+                list_img = clean_img(list_img_tag, url)
+                
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=20, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
@@ -347,7 +353,7 @@ def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
                 dt = time_tag.get("datetime") if time_tag else ""
                 
                 img_tag = inner_soup.select_one('.tdb_single_featured_image img')
-                img = clean_img(img_tag.get("src"), url) if img_tag else ""
+                img = clean_img(img_tag, url) if img_tag else list_img
                 
                 tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
                 gercek_tarih = format_date(dt)
@@ -375,7 +381,7 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
                 list_img_tag = item.find("img")
-                list_img = clean_img(list_img_tag["src"], url) if list_img_tag else ""
+                list_img = clean_img(list_img_tag, url)
                 
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=20, headers=HEADERS)
@@ -385,7 +391,7 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 dt = time_tag.get("datetime") if time_tag else ""
                 
                 img_tag = inner_soup.select_one('.kanews-article-thumbnail img')
-                img = clean_img(img_tag.get("src"), url) if img_tag else list_img
+                img = clean_img(img_tag, url) if img_tag else list_img
                 
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content-inner')
                 gercek_tarih = format_date(dt)
@@ -413,16 +419,16 @@ def scrape_santiye(ex_urls, ex_titles):
                     link = urljoin("https://www.santiye.com.tr", a_tag["href"])
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     
-                    news_post = content.find_parent("div", class_="news-post")
-                    list_img_tag = news_post.find("img") if news_post else None
-                    list_img = clean_img(list_img_tag["src"], "https://www.santiye.com.tr") if list_img_tag else ""
+                    row = content.find_parent("div", class_="row")
+                    list_img_tag = row.select_one('.post-gallery img') if row else None
+                    list_img = clean_img(list_img_tag, "https://www.santiye.com.tr")
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     inner_r = requests.get(link, timeout=15, headers=HEADERS)
                     inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                     
                     img_tag = inner_soup.select_one('.post-gallery img')
-                    img = clean_img(img_tag.get("src"), "https://www.santiye.com.tr") if img_tag else list_img
+                    img = clean_img(img_tag, "https://www.santiye.com.tr") if img_tag else list_img
                     
                     tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
                     gercek_tarih = format_date(dt)
