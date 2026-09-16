@@ -10,7 +10,7 @@ load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
 
 # ==========================================
-# AYARLAR
+# AYARLAR (YAPAY ZEKA KAPALI)
 # ==========================================
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
 BASEROW_TABLE_ID = "1197624"
@@ -47,19 +47,21 @@ def format_date(date_str):
     except: return datetime.now().strftime("%Y-%m-%d")
 
 # ==========================================
-# GÜVENLİ GÖRSEL YÜKLEYİCİ (UPLOAD-FILE)
+# GÖRSEL YÜKLEYİCİ (REFERER KORUMALI)
 # ==========================================
 def upload_image_to_baserow(img_url):
-    """
-    Baserow sunucusunun hotlink engeline takılmaması için görseli
-    önce bot kendi User-Agent'ı ile indirir, sonra doğrudan Baserow'a yükler.
-    """
     if not img_url:
         return None
     try:
-        img_res = requests.get(img_url, headers=HEADERS, timeout=15)
+        # LiteSpeed / Hotlink korumasını aşmak için Referer ekliyoruz
+        download_headers = {
+            'User-Agent': HEADERS['User-Agent'],
+            'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            'Referer': img_url
+        }
+        img_res = requests.get(img_url, headers=download_headers, timeout=15)
         if img_res.status_code != 200 or len(img_res.content) < 200:
-            print(f"   ⚠️ Görsel kaynaktan indirilemedi (HTTP {img_res.status_code})")
+            print(f"   ⚠️ Görsel indirilemedi (HTTP {img_res.status_code})")
             return None
 
         clean_name = img_url.split('/')[-1].split('?')[0]
@@ -124,8 +126,77 @@ def safe_create(fields):
         print(f"   ❌ Bağlantı Hatası: {e}")
 
 # ==========================================
-# SİTE TARAYICILARI
+# FORMEN ÖZEL GÖRSEL YAKALAYICI
 # ==========================================
+def get_formen_image(item, inner_soup, base_url):
+    img_url = ""
+    if inner_soup:
+        # 1. İç sayfa: <a class="td-modal-image" href="...">
+        modal_a = inner_soup.find("a", class_="td-modal-image")
+        if modal_a and modal_a.get("href"):
+            img_url = modal_a["href"]
+
+        # 2. İç sayfa: <meta property="og:image">
+        if not img_url:
+            meta_og = inner_soup.find("meta", property="og:image")
+            if meta_og and meta_og.get("content") and "logo" not in meta_og["content"].lower():
+                img_url = meta_og["content"]
+
+        # 3. İç sayfa: Featured image veya içerik görselleri
+        if not img_url:
+            inner_span = inner_soup.find(attrs={"data-img-url": True})
+            if inner_span and inner_span.get("data-img-url"):
+                img_url = inner_span["data-img-url"]
+
+        if not img_url:
+            for im in inner_soup.select(".tdb_single_featured_image img, .tdb_single_content img, img.entry-thumb"):
+                src = im.get("src") or im.get("data-src") or im.get("data-lazy-src")
+                if src and not src.startswith("data:"):
+                    img_url = src
+                    break
+
+    # 4. Vitrin öğesi (listeden) yedek kontrol
+    if not img_url and item:
+        vitrin_span = item.find(attrs={"data-img-url": True})
+        if vitrin_span and vitrin_span.get("data-img-url"):
+            img_url = vitrin_span["data-img-url"]
+        elif item.find("img"):
+            img_url = item.find("img").get("src")
+
+    if img_url:
+        img_url = img_url.split("?")[0].strip()
+        if not img_url.startswith("http"):
+            img_url = urljoin(base_url, img_url)
+        return img_url.replace("http://", "https://")
+    return ""
+
+# ==========================================
+# TARAMA FONKSİYONLARI
+# ==========================================
+
+def scrape_formen(base_url, portal_name):
+    print(f"\n--- Tarama: {portal_name} ---")
+    try:
+        r = requests.get(base_url, timeout=20, headers=HEADERS)
+        soup = BeautifulSoup(r.content, "html.parser")
+        for item in soup.select(".tdb_module_loop, .td_module_wrap"):
+            title_tag = item.find("h3", class_="entry-title")
+            if not title_tag: continue
+            link = title_tag.find("a")["href"]
+            baslik = title_tag.get_text(strip=True)
+
+            print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
+            inner_r = requests.get(link, timeout=20, headers=HEADERS)
+            inner_soup = BeautifulSoup(inner_r.content, "html.parser")
+            time_tag = inner_soup.find("time", class_="entry-date")
+            dt = time_tag.get("datetime") if time_tag else ""
+
+            img_url = get_formen_image(item, inner_soup, base_url)
+            tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
+
+            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
+            return
+    except Exception as e: print(f"Hata: {e}")
 
 def scrape_forum_makina():
     print(f"\n--- Tarama: Forum Makina ---")
@@ -139,7 +210,6 @@ def scrape_forum_makina():
             link = urljoin("https://www.forummakina.com.tr", item.find("a")["href"])
             date_text = item.find("div", class_="date").get_text(strip=True) if item.find("div", class_="date") else ""
 
-            # 1. Vitrindeki küçük görsel
             vitrin_img = ""
             list_img_tag = item.find("img")
             if list_img_tag and list_img_tag.get("src"):
@@ -149,55 +219,11 @@ def scrape_forum_makina():
             inner_r = requests.get(link, timeout=15, headers=HEADERS)
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
 
-            # 2. İç sayfadaki ana görsel
             detay_img = inner_soup.find("img", src=re.compile(r"gallery/news", re.I))
             img_url = urljoin("https://www.forummakina.com.tr", detay_img["src"]) if (detay_img and detay_img.get("src")) else vitrin_img
 
             tam_metin = extract_clean_text(inner_r.content, '.newsDetail')
             safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
-            return
-    except Exception as e: print(f"Hata: {e}")
-
-def scrape_formen(base_url, portal_name):
-    print(f"\n--- Tarama: {portal_name} ---")
-    try:
-        r = requests.get(base_url, timeout=20, headers=HEADERS)
-        soup = BeautifulSoup(r.content, "html.parser")
-        for item in soup.select(".tdb_module_loop, .td_module_wrap"):
-            title_tag = item.find("h3", class_="entry-title")
-            if not title_tag: continue
-            link = title_tag.find("a")["href"]
-            baslik = title_tag.get_text(strip=True)
-
-            # 1. Vitrindeki data-img-url
-            vitrin_img = ""
-            span_tag = item.find("span", attrs={"data-img-url": True})
-            if span_tag: vitrin_img = span_tag["data-img-url"]
-
-            print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
-            inner_r = requests.get(link, timeout=20, headers=HEADERS)
-            inner_soup = BeautifulSoup(inner_r.content, "html.parser")
-            time_tag = inner_soup.find("time", class_="entry-date")
-            dt = time_tag.get("datetime") if time_tag else ""
-
-            # 2. İç sayfadaki td-modal-image veya entry-thumb
-            img_url = ""
-            a_modal = inner_soup.find("a", class_="td-modal-image")
-            img_thumb = inner_soup.find("img", class_=re.compile(r"entry-thumb", re.I))
-
-            if a_modal and a_modal.get("href"):
-                img_url = a_modal["href"]
-            elif img_thumb and img_thumb.get("src"):
-                img_url = img_thumb["src"]
-            else:
-                img_url = vitrin_img
-
-            if img_url:
-                img_url = img_url.split("?")[0].strip()
-                if not img_url.startswith("http"): img_url = urljoin(base_url, img_url)
-
-            tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
-            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
             return
     except Exception as e: print(f"Hata: {e}")
 
@@ -216,7 +242,6 @@ def scrape_santiye():
             baslik = baslik_tag.get_text(strip=True)
             link = urljoin("https://www.santiye.com.tr", baslik_tag.find("a")["href"])
 
-            # 1. Vitrindeki post-gallery görseli
             vitrin_img = ""
             parent_row = content.find_parent("div", class_="row")
             if parent_row:
@@ -228,7 +253,6 @@ def scrape_santiye():
             inner_r = requests.get(link, timeout=15, headers=HEADERS)
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
 
-            # 2. İç sayfadaki görsel (reklamları elemek için haber gövdesinde arar)
             img_url = ""
             article_box = inner_soup.find("div", class_="article-post") or inner_soup.find("div", class_="block-content")
             if article_box:
