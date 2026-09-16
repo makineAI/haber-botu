@@ -52,19 +52,41 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
-# ☢️ NÜKLEER GÖRSEL AVCISI
+# ☢️ AKILLI GÖRSEL AVCISI (Formen ve Şantiye İçin Özel)
 def get_image_url(soup_context, base_url):
     if not soup_context: return ""
-    html_str = str(soup_context)
-    match = re.search(r'(https?://[^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
-    if match: return match.group(1).split('?')[0]
-    match_rel = re.search(r'([^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
-    if match_rel:
-        url = match_rel.group(1).split('?')[0]
-        if not url.startswith('http'):
-            return urljoin(base_url, url).replace("http://", "https://")
-        return url
-    return ""
+    url = ""
+    
+    if hasattr(soup_context, 'find'):
+        # 1. FORMEN TAKTİĞİ: data-img-url etiketini cımbızla
+        span_tag = soup_context.find(attrs={"data-img-url": True})
+        if span_tag:
+            url = span_tag.get("data-img-url")
+            
+        # 2. ŞANTİYE TAKTİĞİ: Normal img src etiketini al
+        if not url:
+            img_tag = soup_context.find("img")
+            if img_tag and img_tag.get("src"):
+                url = img_tag.get("src")
+
+    # 3. YEDEK PLAN: Linki metin içinde bul
+    if not url:
+        html_str = str(soup_context)
+        match = re.search(r'(https?://[^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
+        if match: url = match.group(1)
+        else:
+            match_rel = re.search(r'([^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
+            if match_rel: url = match_rel.group(1)
+
+    if not url: return ""
+
+    # ŞANTİYE İÇİN KRİTİK TEMİZLİK: Sonundaki ?v=1.0 çöpünü kesip atar
+    url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip().split('?')[0]
+    
+    if not url.startswith('http'):
+        url = urljoin(base_url, url).replace("http://", "https://")
+        
+    return url
 
 def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni):
     prompt = f"""Sen MAKİNE AI platformunun baş editörü ve baş analistisin. 
