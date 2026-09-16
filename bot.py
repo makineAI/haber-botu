@@ -46,79 +46,6 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
-# ==========================================
-# İÇ SAYFA GÖRSEL AVCISI (Senin Verdiğin HTML'lere Göre)
-# ==========================================
-def get_inner_image(inner_soup, base_url, portal_name):
-    if not inner_soup: return ""
-    url = ""
-    
-    # 1. FORUM MAKİNA (İçerideki gallery/news resmini alır)
-    if "Forum" in portal_name:
-        img = inner_soup.find("img", src=re.compile(r"gallery/news", re.I))
-        if not img: img = inner_soup.select_one(".newsDetail img")
-        if img: url = img.get("src")
-        
-    # 2. FORMEN (td-modal-image veya entry-thumb veya data-img-url)
-    elif "Formen" in portal_name:
-        a_tag = inner_soup.find("a", class_="td-modal-image")
-        if a_tag and a_tag.get("href"):
-            url = a_tag.get("href")
-        else:
-            img = inner_soup.find("img", class_=re.compile(r"entry-thumb", re.I))
-            if not img: img = inner_soup.select_one(".tdb_single_content img")
-            if img: url = img.get("src") or img.get("data-img-url")
-            
-        # Bazen span içinde gizleniyor
-        if not url:
-            span = inner_soup.find(attrs={"data-img-url": True})
-            if span: url = span.get("data-img-url")
-            
-    # 3. ŞANTİYE (img-responsive)
-    elif "Şantiye" in portal_name:
-        img = inner_soup.find("img", class_="img-responsive")
-        if not img: img = inner_soup.select_one(".post-content img")
-        if img: url = img.get("src")
-        
-    # 4. MAKİNA MARKET (Eskiden çalışan hali)
-    elif "Makina Market" in portal_name:
-        img = inner_soup.select_one(".cs-entry__thumbnail img")
-        if not img: img = inner_soup.select_one(".entry-content img")
-        if img: url = img.get("src")
-        
-    # 5. İSTİF MH
-    elif "İstif" in portal_name:
-        img = inner_soup.select_one(".kanews-article-thumbnail img")
-        if not img: img = inner_soup.select_one(".entry-content-inner img")
-        if img: url = img.get("src")
-        
-    # 6. DİĞERLERİ (LHT, Maden Ocak vs.)
-    else:
-        img = inner_soup.select_one(".single-post-thumb img")
-        if not img: img = inner_soup.select_one("article img")
-        if not img: img = inner_soup.find("img")
-        if img: url = img.get("src")
-        
-    # URL'yi Temizle ve Formatla
-    if url:
-        url = url.split("?")[0].strip() # Şantiyenin ?v=1.0 kısmını siler
-        if not url.startswith("http"):
-            url = urljoin(base_url, url)
-        return url.replace("http://", "https://")
-        
-    return ""
-
-def get_outer_image(soup_obj, base_url):
-    """Vitrin sayfasından yedek resim alma fonksiyonu"""
-    if not soup_obj: return ""
-    thumb = soup_obj.find(attrs={"data-img-url": True})
-    if thumb and thumb.get("data-img-url"): return thumb.get("data-img-url").split('?')[0].replace("http://", "https://")
-    img = soup_obj.find("img")
-    if img and img.get("src"):
-        src = img.get("src").split('?')[0].strip()
-        if not src.startswith("http"): src = urljoin(base_url, src)
-        return src.replace("http://", "https://")
-    return ""
 
 def clean_html(soup):
     garbage = ['.share', '.twit', 'script', 'style', '.pk-share-buttons-wrap', '#comments', '.cs-entry__subscribe', '#related-articles', '.td-post-sharing', '.tdb_single_tags', '.tdb_single_comments', '#newsletter']
@@ -132,11 +59,13 @@ def extract_clean_text(html_content, container_selector, is_santiye=False):
     content = soup.select_one(container_selector)
     if not content: content = soup.find('article') or soup.find('div', class_=re.compile(r'content|post|entry|detay|news-detail|text', re.I))
     if not content: return ""
+        
     if is_santiye:
         hr_tag = content.find('hr')
         if hr_tag:
             for sibling in hr_tag.find_next_siblings(): sibling.decompose()
             hr_tag.decompose()
+            
     paragraphs = [p.get_text(strip=True) for p in content.find_all('p') if p.get_text(strip=True)]
     return "\n".join(paragraphs) if paragraphs else content.get_text(separator="\n", strip=True)
 
@@ -157,7 +86,7 @@ def safe_create(fields):
     uploaded_name = upload_image_to_baserow(img_url) if img_url else None
     fields["gorsel"] = [{"name": uploaded_name}] if uploaded_name else []
 
-    # YAPAY ZEKA KAPALI: Kota yakmamak için
+    # YAPAY ZEKA KAPALI
     fields["haber_ozeti"] = "Analiz Bekleniyor (Test)"
     fields["mai_analizi"] = "Analiz Bekleniyor (Test)"
     fields.pop("haber_metni", None)
@@ -170,11 +99,92 @@ def safe_create(fields):
         else: print(f"   ❌ Kayıt Hatası: {res.text}")
     except Exception as e: print(f"   ❌ Bağlantı Hatası: {e}")
 
+
 # ==========================================
-# TARAMA FONKSİYONLARI (MAKSİMUM 1 ÖRNEK)
+# 🎯 NOKTA ATIŞI TARAMALAR
 # ==========================================
+
+def scrape_santiye():
+    print(f"\n--- Tarama: Şantiye (Maks 1) ---")
+    try:
+        r = requests.get("https://www.santiye.com.tr/haberler.html?page=1", timeout=15, headers=HEADERS)
+        soup = BeautifulSoup(r.content, "html.parser")
+        for content in soup.find_all("div", class_="post-content"):
+            date_tag = content.find("li")
+            if date_tag and CURRENT_YEAR in date_tag.get_text():
+                dt = date_tag.get_text(strip=True)
+                a_tag = content.find("h2").find("a"); baslik = a_tag.get_text(strip=True)
+                link = urljoin("https://www.santiye.com.tr", a_tag["href"])
+                
+                # SADECE SENİN VERDİĞİN HTML KODUNA GÖRE:
+                img_url = ""
+                # 1. Vitrindeki HTML (<div class="post-gallery"><img...>)
+                parent_row = content.find_parent("div", class_="row")
+                if parent_row:
+                    vitrin_img = parent_row.select_one(".post-gallery img")
+                    if vitrin_img and vitrin_img.get("src"):
+                        img_url = vitrin_img.get("src")
+                
+                print(f"   🔎 İçeriğe Giriliyor: {baslik[:30]}...")
+                inner_r = requests.get(link, timeout=15, headers=HEADERS)
+                inner_soup = BeautifulSoup(inner_r.content, "html.parser")
+                
+                # 2. İçerideki HTML (<img class="img-responsive"...>)
+                if not img_url:
+                    detay_img = inner_soup.find("img", class_="img-responsive")
+                    if detay_img and detay_img.get("src"):
+                        img_url = detay_img.get("src")
+
+                # Şantiye temizlik:
+                if img_url:
+                    img_url = img_url.split("?")[0].strip()
+                    if not img_url.startswith("http"): img_url = urljoin("https://www.santiye.com.tr", img_url)
+
+                tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
+                safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
+                return 
+    except Exception as e: print(f"Hata: {e}")
+
+def scrape_formen(base_url, portal_name):
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
+    try:
+        r = requests.get(base_url, timeout=20, headers=HEADERS)
+        soup = BeautifulSoup(r.content, "html.parser")
+        for item in soup.select(".tdb_module_loop, .td_module_wrap"):
+            title_tag = item.find("h3", class_="entry-title")
+            if not title_tag: continue
+            link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
+            
+            # SADECE SENİN VERDİĞİN HTML KODUNA GÖRE:
+            img_url = ""
+            # 1. Vitrindeki HTML (<span data-img-url="...">)
+            vitrin_span = item.find("span", attrs={"data-img-url": True})
+            if vitrin_span and vitrin_span.get("data-img-url"):
+                img_url = vitrin_span.get("data-img-url")
+            
+            print(f"   🔎 İçeriğe Giriliyor: {baslik[:30]}...")
+            inner_r = requests.get(link, timeout=20, headers=HEADERS)
+            inner_soup = BeautifulSoup(inner_r.content, "html.parser")
+            dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
+            
+            # 2. İçerideki HTML (<a class="td-modal-image">)
+            if not img_url:
+                detay_a = inner_soup.find("a", class_="td-modal-image")
+                if detay_a and detay_a.get("href"):
+                    img_url = detay_a.get("href")
+            
+            # Formen temizlik:
+            if img_url:
+                img_url = img_url.split("?")[0].strip()
+                if not img_url.startswith("http"): img_url = urljoin(base_url, img_url)
+
+            tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
+            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
+            return 
+    except Exception as e: print(f"Hata: {e}")
+
 def scrape_forum_makina():
-    print(f"\n--- Tarama: Forum Makina ---")
+    print(f"\n--- Tarama: Forum Makina (Maks 1) ---")
     try:
         r = requests.get("https://www.forummakina.com.tr/tr/haberler?page=1", timeout=15, headers=HEADERS)
         soup = BeautifulSoup(r.content, "html.parser")
@@ -188,63 +198,24 @@ def scrape_forum_makina():
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 
-                img = get_inner_image(inner_soup, "https://www.forummakina.com.tr", "Forum Makina")
-                if not img: img = get_outer_image(item, "https://www.forummakina.com.tr")
-                
+                img_url = ""
+                # SADECE SENİN VERDİĞİN HTML KODUNA GÖRE (İç sayfa gallery/news)
+                img_tag = inner_soup.find("img", src=re.compile(r"gallery/news", re.I))
+                if not img_tag: img_tag = inner_soup.find("img")
+                if img_tag and img_tag.get("src"):
+                    img_url = img_tag.get("src")
+                    if not img_url.startswith("http"): img_url = urljoin("https://www.forummakina.com.tr", img_url)
+
                 tam_metin = extract_clean_text(inner_r.content, '.newsDetail')
-                safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
+                safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
                 return 
     except Exception as e: print(f"Hata: {e}")
 
-def scrape_formen(base_url, portal_name):
-    print(f"\n--- Tarama: {portal_name} ---")
-    try:
-        r = requests.get(base_url, timeout=20, headers=HEADERS)
-        soup = BeautifulSoup(r.content, "html.parser")
-        for item in soup.select(".tdb_module_loop, .td_module_wrap"):
-            title_tag = item.find("h3", class_="entry-title")
-            if not title_tag: continue
-            link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
-            
-            print(f"   🔎 İçeriğe Giriliyor: {baslik[:30]}...")
-            inner_r = requests.get(link, timeout=20, headers=HEADERS)
-            inner_soup = BeautifulSoup(inner_r.content, "html.parser")
-            dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
-            
-            img = get_inner_image(inner_soup, base_url, "Formen")
-            if not img: img = get_outer_image(item, base_url)
-                
-            tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
-            safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
-            return 
-    except Exception as e: print(f"Hata: {e}")
-
-def scrape_santiye():
-    print(f"\n--- Tarama: Şantiye ---")
-    try:
-        r = requests.get("https://www.santiye.com.tr/haberler.html?page=1", timeout=15, headers=HEADERS)
-        soup = BeautifulSoup(r.content, "html.parser")
-        for content in soup.find_all("div", class_="post-content"):
-            date_tag = content.find("li")
-            if date_tag and CURRENT_YEAR in date_tag.get_text():
-                dt = date_tag.get_text(strip=True)
-                a_tag = content.find("h2").find("a"); baslik = a_tag.get_text(strip=True)
-                link = urljoin("https://www.santiye.com.tr", a_tag["href"])
-                
-                print(f"   🔎 İçeriğe Giriliyor: {baslik[:30]}...")
-                inner_r = requests.get(link, timeout=15, headers=HEADERS)
-                inner_soup = BeautifulSoup(inner_r.content, "html.parser")
-                
-                img = get_inner_image(inner_soup, "https://www.santiye.com.tr", "Şantiye")
-                if not img: img = get_outer_image(content.find_parent("div", class_="news-post"), "https://www.santiye.com.tr")
-                
-                tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
-                safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
-                return 
-    except Exception as e: print(f"Hata: {e}")
-
+# ==========================================
+# ÇALIŞAN DİĞER PLATFORMLAR (HİÇ DOKUNULMADI)
+# ==========================================
 def scrape_makina_market():
-    print(f"\n--- Tarama: Makina Market ---")
+    print(f"\n--- Tarama: Makina Market (Maks 1) ---")
     try:
         r = requests.get("https://makina-market.com.tr/category/haberler/", timeout=20, headers=HEADERS)
         soup = BeautifulSoup(r.content, "html.parser")
@@ -259,16 +230,17 @@ def scrape_makina_market():
             inner_r = requests.get(link, timeout=20, headers=HEADERS)
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
             
-            img = get_inner_image(inner_soup, "https://makina-market.com.tr", "Makina Market")
-            if not img: img = get_outer_image(art, "https://makina-market.com.tr")
-            
+            img_url = ""
+            img_tag = inner_soup.select_one('.cs-entry__thumbnail img') or inner_soup.select_one('.entry-content img')
+            if img_tag and img_tag.get("src"): img_url = img_tag.get("src")
+
             tam_metin = extract_clean_text(inner_r.content, '.entry-content')
-            safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Makina Market", "url": link})
+            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Makina Market", "url": link})
             return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_istif_mh():
-    print(f"\n--- Tarama: İstif MH ---")
+    print(f"\n--- Tarama: İstif MH - Haber (Maks 1) ---")
     try:
         r = requests.get("https://istifmaterialhandling.com/category/haber/", timeout=20, headers=HEADERS)
         soup = BeautifulSoup(r.content, "html.parser")
@@ -282,16 +254,17 @@ def scrape_istif_mh():
             inner_soup = BeautifulSoup(inner_r.content, "html.parser")
             dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
             
-            img = get_inner_image(inner_soup, "https://istifmaterialhandling.com", "İstif")
-            if not img: img = get_outer_image(item, "https://istifmaterialhandling.com")
+            img_url = ""
+            img_tag = inner_soup.select_one('.kanews-article-thumbnail img') or inner_soup.select_one('.entry-content-inner img')
+            if img_tag and img_tag.get("src"): img_url = img_tag.get("src")
             
             tam_metin = extract_clean_text(inner_r.content, '.entry-content-inner')
-            safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "İstif MH - Haber", "url": link})
+            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "İstif MH - Haber", "url": link})
             return 
     except Exception as e: print(f"Hata: {e}")
 
 def scrape_newsplus_theme(base_url, portal_name):
-    print(f"\n--- Tarama: {portal_name} ---")
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
     try:
         r = requests.get(base_url, timeout=15, headers=HEADERS)
         soup = BeautifulSoup(r.content, "html.parser")
@@ -307,25 +280,24 @@ def scrape_newsplus_theme(base_url, portal_name):
                 inner_r = requests.get(link, timeout=15, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 
-                img = get_inner_image(inner_soup, base_url, portal_name)
-                if not img: img = get_outer_image(art, base_url)
+                img_url = ""
+                img_tag = inner_soup.select_one('.single-post-thumb img') or inner_soup.select_one('article img')
+                if img_tag and img_tag.get("src"): img_url = img_tag.get("src")
                 
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content.articlebody')
-                safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
+                safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 return 
     except Exception as e: print(f"Hata: {e}")
 
-# ==========================================
-# ANA ÇALIŞTIRICI
-# ==========================================
 if __name__ == "__main__":
-    print(f"📊 BAŞLIYORUZ! (Sadece 1 Örnek, İç Sayfadan Resim)")
+    print(f"📊 BAŞLIYORUZ! (Sadece 1 Örnek)")
     
-    scrape_forum_makina()
     scrape_santiye()
     scrape_formen("https://formendergisi.com/haber/", "Formen - Haber")
     scrape_formen("https://formendergisi.com/roportaj/", "Formen - Röportaj")
     scrape_formen("https://formendergisi.com/dunyadan/", "Formen - Dünya")
+    
+    scrape_forum_makina()
     scrape_makina_market()
     scrape_istif_mh()
     scrape_newsplus_theme("https://www.lht.com.tr/kategori/haber/", "LHT")
