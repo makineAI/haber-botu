@@ -69,17 +69,35 @@ Haber Metni:
 {haber_metni}"""
 
     try:
-        time.sleep(1) # Nezaketen 1 saniye bekleme
+        time.sleep(1)
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         text = response.text
         
-        ozet_match = re.search(r'<ozet>(.*?)</ozet>', text, re.DOTALL | re.IGNORECASE)
-        analiz_match = re.search(r'<analiz>(.*?)</analiz>', text, re.DOTALL | re.IGNORECASE)
+        ozet = ""
+        analiz = ""
         
-        if ozet_match and analiz_match:
-            return ozet_match.group(1).strip(), analiz_match.group(1).strip()
-        else:
-            return text.strip(), "MAI Analizi XML formatına uymadı."
+        # 1. Klasik XML Arama
+        ozet_match = re.search(r'<ozet>(.*?)</ozet>', text, re.DOTALL | re.IGNORECASE)
+        # Kapanış etiketindeki harf hatalarını da tolere eden regex (</anal...>)
+        analiz_match = re.search(r'<analiz>(.*?)(?:</anal.*?>|$)', text, re.DOTALL | re.IGNORECASE)
+        
+        if ozet_match:
+            ozet = ozet_match.group(1).strip()
+        if analiz_match:
+            analiz = analiz_match.group(1).strip()
+            
+        # 2. Yedek Plan: Etiketler bozulduysa metni <analiz> kelimesinden böl
+        if not ozet or not analiz:
+            if "<analiz>" in text.lower():
+                parts = re.split(r'<analiz>', text, flags=re.IGNORECASE)
+                ozet = re.sub(r'</?ozet>', '', parts[0], flags=re.IGNORECASE).strip()
+                analiz = re.sub(r'</?anal.*?>', '', parts[1], flags=re.IGNORECASE).strip()
+            else:
+                ozet = text.strip()
+                analiz = "MAI Analizi oluşturuldu."
+
+        return ozet, analiz
+
     except Exception as e:
         print(f"   ⚠️ Gemini Hatası: {e}")
         return "Yapay Zeka özet çıkarırken zorlandı.", "Analiz oluşturulamadı."
