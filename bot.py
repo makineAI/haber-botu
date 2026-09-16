@@ -12,7 +12,7 @@ load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
 
 # ==========================================
-# AYARLAR (BASEROW & GEMINI - Kotalar Kalktı)
+# AYARLAR 
 # ==========================================
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
@@ -52,42 +52,60 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
-# ☢️ AKILLI GÖRSEL AVCISI (Formen ve Şantiye İçin Özel)
+
+# ==========================================
+# 📸 ÖZEL GÖRSEL AVCILARI (Airtable Dönemi Çalışan Taktikler)
+# ==========================================
+
+# 1. Genel Siteler İçin
 def get_image_url(soup_context, base_url):
     if not soup_context: return ""
-    url = ""
+    img = soup_context.find("img")
+    if img and img.has_attr("src"):
+        url = img["src"].split('?')[0]
+        if not url.startswith('http'): return urljoin(base_url, url)
+        return url
+    return ""
+
+# 2. Formen İçin Özel Fonksiyon (data-img-url ve entry-thumb)
+def extract_formen_img(soup_context):
+    if not soup_context: return ""
     
-    if hasattr(soup_context, 'find'):
-        # 1. FORMEN TAKTİĞİ: data-img-url etiketini cımbızla
-        span_tag = soup_context.find(attrs={"data-img-url": True})
-        if span_tag:
-            url = span_tag.get("data-img-url")
+    # Taktik 1: entry-thumb class'ının içindeki data-img-url veya style
+    entry = soup_context.find(class_="entry-thumb")
+    if entry:
+        if entry.has_attr("data-img-url"): return entry["data-img-url"]
+        if entry.has_attr("style"):
+            match = re.search(r'url\([\'"]?(.*?)[\'"]?\)', entry["style"])
+            if match: return match.group(1)
             
-        # 2. ŞANTİYE TAKTİĞİ: Normal img src etiketini al
-        if not url:
-            img_tag = soup_context.find("img")
-            if img_tag and img_tag.get("src"):
-                url = img_tag.get("src")
-
-    # 3. YEDEK PLAN: Linki metin içinde bul
-    if not url:
-        html_str = str(soup_context)
-        match = re.search(r'(https?://[^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
-        if match: url = match.group(1)
-        else:
-            match_rel = re.search(r'([^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
-            if match_rel: url = match_rel.group(1)
-
-    if not url: return ""
-
-    # ŞANTİYE İÇİN KRİTİK TEMİZLİK: Sonundaki ?v=1.0 çöpünü kesip atar
-    url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip().split('?')[0]
-    
-    if not url.startswith('http'):
-        url = urljoin(base_url, url).replace("http://", "https://")
+    # Taktik 2: data-img-url nerede olursa olsun bul
+    thumb = soup_context.find(attrs={"data-img-url": True})
+    if thumb: return thumb["data-img-url"]
         
-    return url
+    # Taktik 3: Normal img
+    img = soup_context.find("img")
+    if img and img.has_attr("src"): return img["src"]
+    
+    return ""
 
+# 3. Şantiye İçin Özel Fonksiyon (Parent Row Mantığı)
+def extract_santiye_img(content_div, base_url):
+    if not content_div: return ""
+    # Airtable dönemindeki hilemiz: Resmi saran üst 'row' etiketine çıkmak
+    row = content_div.find_parent(class_="row")
+    if row:
+        img = row.find("img")
+        if img and img.has_attr("src"):
+            url = img["src"].split('?')[0]
+            if not url.startswith('http'): return urljoin(base_url, url)
+            return url
+    return ""
+
+
+# ==========================================
+# YAPAY ZEKA VE BASEROW KAYIT
+# ==========================================
 def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni):
     prompt = f"""Sen MAKİNE AI platformunun baş editörü ve baş analistisin. 
 Aşağıdaki haberi oku ve bana YALNIZCA aşağıdaki XML etiketleri (tag) arasında çıktı ver. Başka hiçbir açıklama yazma.
@@ -103,7 +121,7 @@ Haber Metni:
 {haber_metni}"""
 
     try:
-        time.sleep(1) # Sadece 1 saniye dinlenme
+        time.sleep(1) # Limit kalktı, sadece nezaketen 1 saniye bekleme
         response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         text = response.text
         
@@ -174,7 +192,7 @@ def safe_create(fields):
 
     metin = fields.get("haber_metni", "")
     if metin and len(metin) > 50: 
-        print(f"   🤖 Gemini analiz ediyor... (Limitler Kalktı!)")
+        print(f"   🤖 Gemini analiz ediyor...")
         ozet, analiz = yapay_zeka_ile_ozetle_ve_analiz_et(metin)
         fields["haber_ozeti"] = ozet
         fields["mai_analizi"] = analiz
@@ -192,10 +210,10 @@ def safe_create(fields):
     except Exception as e: print(f"   ❌ Bağlantı Hatası: {e}")
 
 # ==========================================
-# TARAMA FONKSİYONLARI (HER SİTEDEN SADECE 1 ÖRNEK ÇEKER!)
+# TARAMA FONKSİYONLARI (MAKSİMUM 1 ÖRNEK)
 # ==========================================
 def scrape_forum_makina(ex_urls, ex_titles):
-    print(f"\n--- [1/10] Forum Makina (Maks 1 Örnek) ---")
+    print(f"\n--- Tarama: Forum Makina (Maks 1) ---")
     for page in range(1, 2): 
         url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
         try:
@@ -217,11 +235,11 @@ def scrape_forum_makina(ex_urls, ex_titles):
                     tam_metin = extract_clean_text(inner_r.content, '.newsDetail')
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                    return # 1 HABER ÇEKİNCE DURUR
+                    return 
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} (Maks 1 Örnek) ---")
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
     for page in range(1, 2):
         url = f"{base_url}page/{page}/" if page > 1 else base_url
         try:
@@ -245,11 +263,11 @@ def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
                     tam_metin = extract_clean_text(inner_r.content, '.entry-content.articlebody')
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                    return # 1 HABER ÇEKİNCE DURUR
+                    return 
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_makina_market(ex_urls, ex_titles):
-    print(f"\n--- Tarama: Makina Market (Maks 1 Örnek) ---")
+    print(f"\n--- Tarama: Makina Market (Maks 1) ---")
     for page in range(1, 2):
         url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
         try:
@@ -273,11 +291,11 @@ def scrape_makina_market(ex_urls, ex_titles):
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Makina Market", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                return # 1 HABER ÇEKİNCE DURUR
+                return 
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} (Maks 1 Örnek) ---")
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
     for page in range(1, 2):
         url = f"{base_url}page/{page}/"
         try:
@@ -289,23 +307,25 @@ def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
                 link = title_tag.find("a")["href"]; baslik = title_tag.get_text(strip=True)
                 if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                 
-                list_img = get_image_url(item, url)
+                # FORMEN'E ÖZEL FONKSİYON KULLANILIYOR
+                list_img = extract_formen_img(item)
+                
                 print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                 inner_r = requests.get(link, timeout=20, headers=HEADERS)
                 inner_soup = BeautifulSoup(inner_r.content, "html.parser")
                 dt = inner_soup.find("time", class_="entry-date").get("datetime") if inner_soup.find("time", class_="entry-date") else ""
                 
-                inner_img = get_image_url(inner_soup.select_one('.tdb_single_featured_image'), url)
+                inner_img = extract_formen_img(inner_soup.select_one('.tdb_single_featured_image'))
                 img = inner_img if inner_img else list_img
                 
                 tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                return # 1 HABER ÇEKİNCE DURUR
+                return 
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} (Maks 1 Örnek) ---")
+    print(f"\n--- Tarama: {portal_name} (Maks 1) ---")
     for page in range(1, 2):
         url = f"{base_url}page/{page}/"
         try:
@@ -329,11 +349,11 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content-inner')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                return # 1 HABER ÇEKİNCE DURUR
+                return 
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_santiye(ex_urls, ex_titles):
-    print(f"\n--- Tarama: Şantiye (Maks 1 Örnek) ---")
+    print(f"\n--- Tarama: Şantiye (Maks 1) ---")
     for page in range(1, 2):
         url = f"https://www.santiye.com.tr/haberler.html?page={page}"
         try:
@@ -347,18 +367,25 @@ def scrape_santiye(ex_urls, ex_titles):
                     link = urljoin("https://www.santiye.com.tr", a_tag["href"])
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     
-                    list_img = get_image_url(content.find_parent("div", class_="news-post"), "https://www.santiye.com.tr")
+                    # ŞANTİYE'YE ÖZEL "PARENT ROW" FONKSİYONU KULLANILIYOR
+                    list_img = extract_santiye_img(content, "https://www.santiye.com.tr")
                     
                     print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
                     inner_r = requests.get(link, timeout=15, headers=HEADERS)
-                    inner_img = get_image_url(BeautifulSoup(inner_r.content, "html.parser").select_one('.post-gallery'), "https://www.santiye.com.tr")
+                    
+                    # İç sayfadaki galeri için noktasal atış
+                    inner_img_tag = BeautifulSoup(inner_r.content, "html.parser").select_one('.post-gallery img')
+                    inner_img = inner_img_tag["src"].split('?')[0] if inner_img_tag and inner_img_tag.has_attr("src") else ""
+                    if inner_img and not inner_img.startswith('http'): inner_img = urljoin("https://www.santiye.com.tr", inner_img)
+                    
                     img = inner_img if inner_img else list_img
                     
                     tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
-                    return # 1 HABER ÇEKİNCE DURUR
+                    return 
         except Exception as e: print(f"Hata: {e}")
+
 
 # ==========================================
 # ANA ÇALIŞTIRICI
