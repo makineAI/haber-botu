@@ -1,23 +1,28 @@
 import os
 import requests
+import time
 import re
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from urllib.parse import urljoin
 from datetime import datetime
+from google import genai
 
 load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
 
 # ==========================================
-# AYARLAR (YAPAY ZEKA KAPALI)
+# AYARLAR (BASEROW & GEMINI)
 # ==========================================
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 BASEROW_TABLE_ID = "1197624"
 
-if not BASEROW_TOKEN:
-    print("❌ HATA: Baserow şifresi bulunamadı!")
+if not BASEROW_TOKEN or not GEMINI_API_KEY:
+    print("❌ HATA: Baserow veya Gemini anahtarları bulunamadı!")
     exit()
+
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -47,13 +52,45 @@ def format_date(date_str):
     except: return datetime.now().strftime("%Y-%m-%d")
 
 # ==========================================
-# GÖRSEL YÜKLEYİCİ (REFERER KORUMALI)
+# YAPAY ZEKA (GEMINI FLASH)
+# ==========================================
+def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni):
+    prompt = f"""Sen MAKİNE AI platformunun baş editörü ve baş analistisin. 
+Aşağıdaki haberi oku ve bana YALNIZCA aşağıdaki XML etiketleri (tag) arasında çıktı ver. Başka hiçbir açıklama yazma.
+
+<ozet>
+Haberin kritik noktalarını 3-4 maddelik (tire ile), KISA ve ÖZ bir şekilde özetle. Önemli rakamları veya kilit kelimeleri Markdown formatında (**kalın**) vurgula.
+</ozet>
+<analiz>
+Bu haberin sektöre (iş makineleri, istifleme, inşaat vb.) etkisini 1 veya 2 cümle ile çok kısa belirt.
+</analiz>
+
+Haber Metni:
+{haber_metni}"""
+
+    try:
+        time.sleep(1) # Nezaketen 1 saniye bekleme
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        text = response.text
+        
+        ozet_match = re.search(r'<ozet>(.*?)</ozet>', text, re.DOTALL | re.IGNORECASE)
+        analiz_match = re.search(r'<analiz>(.*?)</analiz>', text, re.DOTALL | re.IGNORECASE)
+        
+        if ozet_match and analiz_match:
+            return ozet_match.group(1).strip(), analiz_match.group(1).strip()
+        else:
+            return text.strip(), "MAI Analizi XML formatına uymadı."
+    except Exception as e:
+        print(f"   ⚠️ Gemini Hatası: {e}")
+        return "Yapay Zeka özet çıkarırken zorlandı.", "Analiz oluşturulamadı."
+
+# ==========================================
+# GÖRSEL YÜKLEYİCİ (DOĞRULANMIŞ REFERER YÖNTEMİ)
 # ==========================================
 def upload_image_to_baserow(img_url):
     if not img_url:
         return None
     try:
-        # LiteSpeed / Hotlink korumasını aşmak için Referer ekliyoruz
         download_headers = {
             'User-Agent': HEADERS['User-Agent'],
             'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
@@ -110,8 +147,16 @@ def safe_create(fields):
     uploaded_name = upload_image_to_baserow(img_url) if img_url else None
     fields["gorsel"] = [{"name": uploaded_name}] if uploaded_name else []
 
-    fields["haber_ozeti"] = "Analiz Bekleniyor"
-    fields["mai_analizi"] = "-"
+    metin = fields.get("haber_metni", "")
+    if metin and len(metin) > 50:
+        print(f"   🤖 Gemini analiz ediyor...")
+        ozet, analiz = yapay_zeka_ile_ozetle_ve_analiz_et(metin)
+        fields["haber_ozeti"] = ozet
+        fields["mai_analizi"] = analiz
+    else:
+        fields["haber_ozeti"] = "Metin okunamadı."
+        fields["mai_analizi"] = "-"
+
     fields.pop("haber_metni", None)
 
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
@@ -126,23 +171,20 @@ def safe_create(fields):
         print(f"   ❌ Bağlantı Hatası: {e}")
 
 # ==========================================
-# FORMEN ÖZEL GÖRSEL YAKALAYICI
+# FORMEN GÖRSEL AVCISI
 # ==========================================
 def get_formen_image(item, inner_soup, base_url):
     img_url = ""
     if inner_soup:
-        # 1. İç sayfa: <a class="td-modal-image" href="...">
         modal_a = inner_soup.find("a", class_="td-modal-image")
         if modal_a and modal_a.get("href"):
             img_url = modal_a["href"]
 
-        # 2. İç sayfa: <meta property="og:image">
         if not img_url:
             meta_og = inner_soup.find("meta", property="og:image")
             if meta_og and meta_og.get("content") and "logo" not in meta_og["content"].lower():
                 img_url = meta_og["content"]
 
-        # 3. İç sayfa: Featured image veya içerik görselleri
         if not img_url:
             inner_span = inner_soup.find(attrs={"data-img-url": True})
             if inner_span and inner_span.get("data-img-url"):
@@ -155,7 +197,6 @@ def get_formen_image(item, inner_soup, base_url):
                     img_url = src
                     break
 
-    # 4. Vitrin öğesi (listeden) yedek kontrol
     if not img_url and item:
         vitrin_span = item.find(attrs={"data-img-url": True})
         if vitrin_span and vitrin_span.get("data-img-url"):
@@ -171,32 +212,8 @@ def get_formen_image(item, inner_soup, base_url):
     return ""
 
 # ==========================================
-# TARAMA FONKSİYONLARI
+# TARAMA FONKSİYONLARI (1'ER HABER)
 # ==========================================
-
-def scrape_formen(base_url, portal_name):
-    print(f"\n--- Tarama: {portal_name} ---")
-    try:
-        r = requests.get(base_url, timeout=20, headers=HEADERS)
-        soup = BeautifulSoup(r.content, "html.parser")
-        for item in soup.select(".tdb_module_loop, .td_module_wrap"):
-            title_tag = item.find("h3", class_="entry-title")
-            if not title_tag: continue
-            link = title_tag.find("a")["href"]
-            baslik = title_tag.get_text(strip=True)
-
-            print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
-            inner_r = requests.get(link, timeout=20, headers=HEADERS)
-            inner_soup = BeautifulSoup(inner_r.content, "html.parser")
-            time_tag = inner_soup.find("time", class_="entry-date")
-            dt = time_tag.get("datetime") if time_tag else ""
-
-            img_url = get_formen_image(item, inner_soup, base_url)
-            tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
-
-            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
-            return
-    except Exception as e: print(f"Hata: {e}")
 
 def scrape_forum_makina():
     print(f"\n--- Tarama: Forum Makina ---")
@@ -270,6 +287,30 @@ def scrape_santiye():
 
             tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
             safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
+            return
+    except Exception as e: print(f"Hata: {e}")
+
+def scrape_formen(base_url, portal_name):
+    print(f"\n--- Tarama: {portal_name} ---")
+    try:
+        r = requests.get(base_url, timeout=20, headers=HEADERS)
+        soup = BeautifulSoup(r.content, "html.parser")
+        for item in soup.select(".tdb_module_loop, .td_module_wrap"):
+            title_tag = item.find("h3", class_="entry-title")
+            if not title_tag: continue
+            link = title_tag.find("a")["href"]
+            baslik = title_tag.get_text(strip=True)
+
+            print(f"   🔎 İçeriğe giriliyor: {baslik[:30]}...")
+            inner_r = requests.get(link, timeout=20, headers=HEADERS)
+            inner_soup = BeautifulSoup(inner_r.content, "html.parser")
+            time_tag = inner_soup.find("time", class_="entry-date")
+            dt = time_tag.get("datetime") if time_tag else ""
+
+            img_url = get_formen_image(item, inner_soup, base_url)
+            tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
+
+            safe_create({"haber_basligi": baslik, "gorsel": img_url, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
             return
     except Exception as e: print(f"Hata: {e}")
 
@@ -349,7 +390,7 @@ def scrape_newsplus_theme(base_url, portal_name):
     except Exception as e: print(f"Hata: {e}")
 
 if __name__ == "__main__":
-    print(f"📊 BAŞLIYORUZ! (SADECE 1'ER HABER)")
+    print(f"📊 BAŞLIYORUZ! (AI Analiz & Özet Açık - Sadece 1'er Haber)")
     scrape_forum_makina()
     scrape_santiye()
     scrape_formen("https://formendergisi.com/haber/", "Formen - Haber")
