@@ -8,24 +8,22 @@ from urllib.parse import urljoin
 from datetime import datetime
 from google import genai
 
-# Çevresel değişkenleri yükle (.env dosyasından)
 load_dotenv()
 CURRENT_YEAR = str(datetime.now().year)
 
 # ==========================================
-# AYARLAR (BASEROW & GEMINI - KISITLAMALAR KALKTI!)
+# AYARLAR (BASEROW & GEMINI - Kotalar Kalktı)
 # ==========================================
 BASEROW_TOKEN = os.environ.get('BASEROW_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 BASEROW_TABLE_ID = "1197624"
 
 if not BASEROW_TOKEN or not GEMINI_API_KEY:
-    print("❌ HATA: Şifreler bulunamadı! Lütfen .env dosyanızı kontrol edin.")
+    print("❌ HATA: Şifreler bulunamadı!")
     exit()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Sitelere banlanmamak için tarayıcı kimliği
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -33,9 +31,6 @@ HEADERS = {
     'Connection': 'keep-alive'
 }
 
-# ==========================================
-# YARDIMCI FONKSİYONLAR
-# ==========================================
 def format_date(date_str):
     if not date_str: return datetime.now().strftime("%Y-%m-%d")
     if len(date_str) >= 10 and date_str[4] == '-' and date_str[7] == '-': return date_str[:10]
@@ -57,23 +52,18 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
-# ☢️ NÜKLEER GÖRSEL AVCISI (Regex ile Kesin Çözüm)
+# ☢️ NÜKLEER GÖRSEL AVCISI
 def get_image_url(soup_context, base_url):
     if not soup_context: return ""
     html_str = str(soup_context)
-    
-    # 1. Aşama: Tam (https://) linkli resimleri bul
     match = re.search(r'(https?://[^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
     if match: return match.group(1).split('?')[0]
-        
-    # 2. Aşama: Yarım (/uploads/resim.jpg) linkli resimleri bul ve birleştir
     match_rel = re.search(r'([^\s"\'<>]+?\.(?:jpg|jpeg|png|webp))', html_str, re.IGNORECASE)
     if match_rel:
         url = match_rel.group(1).split('?')[0]
         if not url.startswith('http'):
             return urljoin(base_url, url).replace("http://", "https://")
         return url
-        
     return ""
 
 def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni):
@@ -91,9 +81,7 @@ Haber Metni:
 {haber_metni}"""
 
     try:
-        # Limit kalktığı için bekleme süresini 1 saniyeye düşürdük
-        time.sleep(1) 
-        
+        time.sleep(1) # Sadece 1 saniye dinlenme
         response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         text = response.text
         
@@ -104,7 +92,6 @@ Haber Metni:
             return ozet_match.group(1).strip(), analiz_match.group(1).strip()
         else:
             return text.strip(), "MAI Analizi XML formatına uymadı."
-            
     except Exception as e:
         print(f"   ⚠️ Gemini Hatası: {e}")
         return "Yapay Zeka özet çıkarırken zorlandı.", "Analiz oluşturulamadı."
@@ -173,9 +160,7 @@ def safe_create(fields):
         fields["haber_ozeti"] = "Metin okunamadı."
         fields["mai_analizi"] = "-"
 
-    # Orijinal metni veritabanına kaydetmemek için temizliyoruz
     fields.pop("haber_metni", None)
-    
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
     headers = {"Authorization": f"Token {BASEROW_TOKEN}", "Content-Type": "application/json"}
     try:
@@ -185,11 +170,11 @@ def safe_create(fields):
     except Exception as e: print(f"   ❌ Bağlantı Hatası: {e}")
 
 # ==========================================
-# TARAMA FONKSİYONLARI (Return Kilitleri Kaldırıldı)
+# TARAMA FONKSİYONLARI (HER SİTEDEN SADECE 1 ÖRNEK ÇEKER!)
 # ==========================================
 def scrape_forum_makina(ex_urls, ex_titles):
-    print(f"\n--- Tarama: Forum Makina ---")
-    for page in range(1, 3): 
+    print(f"\n--- [1/10] Forum Makina (Maks 1 Örnek) ---")
+    for page in range(1, 2): 
         url = f"https://www.forummakina.com.tr/tr/haberler?page={page}"
         try:
             r = requests.get(url, timeout=15, headers=HEADERS)
@@ -210,11 +195,12 @@ def scrape_forum_makina(ex_urls, ex_titles):
                     tam_metin = extract_clean_text(inner_r.content, '.newsDetail')
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(date_text), "portal": "Forum Makina", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                    return # 1 HABER ÇEKİNCE DURUR
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} ---")
-    for page in range(1, 3):
+    print(f"\n--- Tarama: {portal_name} (Maks 1 Örnek) ---")
+    for page in range(1, 2):
         url = f"{base_url}page/{page}/" if page > 1 else base_url
         try:
             r = requests.get(url, timeout=15, headers=HEADERS)
@@ -237,11 +223,12 @@ def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
                     tam_metin = extract_clean_text(inner_r.content, '.entry-content.articlebody')
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                    return # 1 HABER ÇEKİNCE DURUR
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_makina_market(ex_urls, ex_titles):
-    print(f"\n--- Tarama: Makina Market ---")
-    for page in range(1, 3):
+    print(f"\n--- Tarama: Makina Market (Maks 1 Örnek) ---")
+    for page in range(1, 2):
         url = f"https://makina-market.com.tr/category/haberler/page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=HEADERS)
@@ -264,11 +251,12 @@ def scrape_makina_market(ex_urls, ex_titles):
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Makina Market", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                return # 1 HABER ÇEKİNCE DURUR
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} ---")
-    for page in range(1, 3):
+    print(f"\n--- Tarama: {portal_name} (Maks 1 Örnek) ---")
+    for page in range(1, 2):
         url = f"{base_url}page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=HEADERS)
@@ -291,11 +279,12 @@ def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
                 tam_metin = extract_clean_text(inner_r.content, '.tdb_single_content')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                return # 1 HABER ÇEKİNCE DURUR
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
-    print(f"\n--- Tarama: {portal_name} ---")
-    for page in range(1, 3):
+    print(f"\n--- Tarama: {portal_name} (Maks 1 Örnek) ---")
+    for page in range(1, 2):
         url = f"{base_url}page/{page}/"
         try:
             r = requests.get(url, timeout=20, headers=HEADERS)
@@ -318,11 +307,12 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 tam_metin = extract_clean_text(inner_r.content, '.entry-content-inner')
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                return # 1 HABER ÇEKİNCE DURUR
         except Exception as e: print(f"Hata: {e}")
 
 def scrape_santiye(ex_urls, ex_titles):
-    print(f"\n--- Tarama: Şantiye ---")
-    for page in range(1, 3):
+    print(f"\n--- Tarama: Şantiye (Maks 1 Örnek) ---")
+    for page in range(1, 2):
         url = f"https://www.santiye.com.tr/haberler.html?page={page}"
         try:
             r = requests.get(url, timeout=15, headers=HEADERS)
@@ -345,6 +335,7 @@ def scrape_santiye(ex_urls, ex_titles):
                     tam_metin = extract_clean_text(inner_r.content, '.post-content', is_santiye=True)
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": format_date(dt), "portal": "Şantiye", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
+                    return # 1 HABER ÇEKİNCE DURUR
         except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
