@@ -59,25 +59,30 @@ def format_date(date_str):
         return f"{year}-{month}-{day}"
     except: return datetime.now().strftime("%Y-%m-%d")
 
-def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni):
-    prompt = f"""Sen MAKİNE AI platformunun baş editörüsün.
-Aşağıdaki haberi oku ve bana tam olarak belirttiğim iki bölüm halinde çıktı ver.
+def yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni, deneme_sayisi=0):
+    prompt = f"""Sen MAKİNE AI platformunun baş editörü ve baş analistisin. 
+Aşağıdaki haberi oku ve bana tam olarak belirttiğim iki bölüm halinde Türkçe çıktı ver.
 
 [ÖZET]
-Haberin kilit noktalarını ve önemli rakamları vurgulayarak EN FAZLA 3 maddelik (tire ile), ÇOK KISA bir özet çıkar. Önemli rakamları ve firma isimlerini Markdown (**kalın**) ile vurgula.
+Haberin kritik noktalarını 3-4 maddelik (tire ile), KISA ve ÖZ bir şekilde özetle. Okunabilirliği artırmak için önemli rakamları, kilit kelimeleri veya şirket isimlerini Markdown formatında (**kalın**) vurgula.
 
 [ANALİZ]
-Bu gelişmenin makine, istifleme veya endüstri sektörüne etkisini SADECE 1 CÜMLE ile özetle. Net, vurucu ve sadede gelen bir yorum olsun.
+Bu haberin sektöre (iş makineleri, istifleme, inşaat vb.) etkisini değerlendir. Çok kısa, net ve doğrudan sadede gelen (maksimum 1-2 cümle) bir 'MAI Analizi' yap.
 
 Haber Metni:
 {haber_metni}"""
 
     try:
-        time.sleep(2) # Gemini'nin bizi spam algılamaması için 2 saniye dinlenme
-        response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+        # API Limitini (Kota) korumak için her işlemden önce 3 saniye dinlen
+        time.sleep(3) 
+        
+        response = client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt
+        )
         text = response.text
         
-        # Regex ile ayırma (Markdown sembollerinden etkilenmemesi için çok daha güvenli)
+        # Regex ile ayırma (Çok daha güvenli ayıklama)
         ozet_match = re.search(r'\[ÖZET\](.*?)\[ANALİZ\]', text, re.DOTALL | re.IGNORECASE)
         analiz_match = re.search(r'\[ANALİZ\](.*)', text, re.DOTALL | re.IGNORECASE)
         
@@ -88,10 +93,21 @@ Haber Metni:
             analiz_part = text.split("[ANALİZ]")[1].strip()
             return ozet_part, analiz_part
         else:
-            return text, "Analiz formatı oluşturulamadı."
+            return text, "MAI Analizi formatı oluşturulamadı."
             
     except Exception as e:
-        return f"Özet Çıkarılamadı (Hata: {e})", "Analiz Yapılamadı"
+        hata_mesaji = str(e)
+        # Google Kotasına (429 Hatası) takılırsak sistemi çökertmeyip 30 saniye uyutuyoruz (Maks 3 kez dener)
+        if "429" in hata_mesaji or "RESOURCE_EXHAUSTED" in hata_mesaji:
+            if deneme_sayisi < 3:
+                print(f"   ⏳ Gemini API Limiti aşıldı. 30 saniye bekleniyor... (Deneme: {deneme_sayisi+1}/3)")
+                time.sleep(30)
+                return yapay_zeka_ile_ozetle_ve_analiz_et(haber_metni, deneme_sayisi + 1)
+            else:
+                return "API hız limiti kalıcı olarak aşıldığı için özet çıkarılamadı.", "Analiz yapılamadı."
+        else:
+            print(f"   ⚠️ Gemini Hatası: {e}")
+            return "Özet oluşturulamadı.", "Analiz oluşturulamadı."
 
 def get_existing_data():
     ex_urls, ex_titles = set(), set()
@@ -133,6 +149,7 @@ def extract_clean_text(html_content, container_selector, is_santiye=False):
     if not content: content = soup.find('article') or soup.find('div', class_=re.compile(r'content|post|entry|detay|news-detail|text', re.I))
     if not content: return ""
         
+    # Şantiye için <hr> sonrası abone çöplerini temizleme
     if is_santiye:
         hr_tag = content.find('hr')
         if hr_tag:
@@ -140,6 +157,8 @@ def extract_clean_text(html_content, container_selector, is_santiye=False):
             hr_tag.decompose()
             
     paragraphs = [p.get_text(strip=True) for p in content.find_all('p') if p.get_text(strip=True)]
+    
+    # Eğer <p> bulunamazsa zorla genel metni al (Engellemelere karşı)
     if not paragraphs:
         backup_text = content.get_text(separator="\n", strip=True)
         if len(backup_text) > 50: return backup_text
@@ -149,7 +168,8 @@ def extract_clean_text(html_content, container_selector, is_santiye=False):
 def clean_img(url, base_url):
     if not url or "data:image" in url: return ""
     try:
-        actual_url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip().split('?')[0] # Soru işaretlerini atar
+        # Soru işareti (?v=1.0) gibi versiyon eklerini silip URL'yi temizler
+        actual_url = url.replace('&quot;', '').replace('"', '').replace("'", "").strip().split('?')[0]
         return urljoin(base_url, actual_url).replace("http://", "https://")
     except: return ""
 
@@ -171,6 +191,7 @@ def safe_create(fields):
     fields["gorsel"] = [{"name": uploaded_name}] if uploaded_name else []
 
     metin = fields.get("haber_metni", "")
+    # Karakter sınırı 50'ye düşürüldü ki kısa metinlerde bile analiz çalışsın
     if metin and len(metin) > 50: 
         print(f"   🤖 Gemini analiz ediyor... (Metin Uzunluğu: {len(metin)} Karakter)")
         ozet, analiz = yapay_zeka_ile_ozetle_ve_analiz_et(metin)
@@ -181,7 +202,7 @@ def safe_create(fields):
         fields["haber_ozeti"] = "Metin tespit edilemedi (Site botları engellemiş olabilir)."
         fields["mai_analizi"] = "-"
 
-    fields.pop("haber_metni", None)
+    fields.pop("haber_metni", None) # Veritabanına şişkinlik yapmaması için siliyoruz
 
     url = f"https://api.baserow.io/api/database/rows/table/{BASEROW_TABLE_ID}/?user_field_names=true"
     headers = {"Authorization": f"Token {BASEROW_TOKEN}", "Content-Type": "application/json"}
@@ -224,7 +245,7 @@ def scrape_forum_makina(ex_urls, ex_titles):
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Forum Makina", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     return 
-        except Exception as e: print(e)
+        except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
 # 2. LHT & 6. MADEN OCAK
@@ -261,7 +282,7 @@ def scrape_newsplus_theme(base_url, portal_name, ex_urls, ex_titles):
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": portal_name, "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     return 
-        except Exception as e: print(e)
+        except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
 # 3. MAKİNA MARKET
@@ -299,7 +320,7 @@ def scrape_makina_market(ex_urls, ex_titles):
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Makina Market", "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 return
-        except Exception as e: print(e)
+        except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
 # 4. FORMEN GRUBU
@@ -334,7 +355,7 @@ def scrape_formen(base_url, portal_name, ex_urls, ex_titles):
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 return
-        except Exception as e: print(e)
+        except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
 # 5. İSTİF MH GRUBU
@@ -372,7 +393,7 @@ def scrape_istif_mh(base_url, portal_name, ex_urls, ex_titles):
                 safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": portal_name, "url": link})
                 ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                 return
-        except Exception as e: print(e)
+        except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
 # 7. ŞANTİYE
@@ -392,7 +413,6 @@ def scrape_santiye(ex_urls, ex_titles):
                     link = urljoin("https://www.santiye.com.tr", a_tag["href"])
                     if link.lower() in ex_urls or baslik.lower() in ex_titles: continue
                     
-                    # Şantiye Liste Görseli Yedeklemesi
                     news_post = content.find_parent("div", class_="news-post")
                     list_img_tag = news_post.find("img") if news_post else None
                     list_img = clean_img(list_img_tag["src"], "https://www.santiye.com.tr") if list_img_tag else ""
@@ -410,7 +430,7 @@ def scrape_santiye(ex_urls, ex_titles):
                     safe_create({"haber_basligi": baslik, "gorsel": img, "haber_metni": tam_metin, "yayin_tarihi": gercek_tarih, "portal": "Şantiye", "url": link})
                     ex_urls.add(link.lower()); ex_titles.add(baslik.lower())
                     return
-        except Exception as e: print(e)
+        except Exception as e: print(f"Hata: {e}")
 
 # ==========================================
 # ANA ÇALIŞTIRICI
